@@ -1,14 +1,21 @@
-import { FormEvent, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Check, Eye, HelpCircle, RotateCcw, Sparkles, X } from 'lucide-react'
 import {
   Belief,
   BeliefState,
-  createModel,
   perceiveInput,
   setBeliefState,
   stateOrder,
   summarizeModel,
 } from './lib/perception-model'
+import { getRouteReadiness, reviewStaleness } from './lib/perception-review'
+import {
+  clearWorkspace,
+  getActiveModel,
+  loadWorkspace,
+  saveWorkspace,
+  updateActiveModel,
+} from './lib/perception-store'
 
 const labels: Record<BeliefState, string> = {
   observed: 'Observed',
@@ -27,6 +34,8 @@ const descriptions: Partial<Record<BeliefState, string>> = {
   stale: 'This may have been true, but needs fresh evidence.',
   rejected: 'An earlier interpretation was corrected and should not guide the route.',
 }
+
+const routeSteps = ['IDEA', 'UNDERSTOOD', 'MAPPED', 'ROUTED', 'BUILT', 'CONNECTED', 'EXECUTED', 'VERIFIED', 'REALIZED']
 
 function BeliefCard({
   belief,
@@ -58,9 +67,18 @@ function BeliefCard({
 }
 
 function App() {
-  const [model, setModel] = useState(() => createModel('deer'))
+  const [workspace, setWorkspace] = useState(() => {
+    const loaded = loadWorkspace('deer')
+    return updateActiveModel(loaded, (model) => reviewStaleness(model))
+  })
   const [input, setInput] = useState('')
+  const model = useMemo(() => getActiveModel(workspace), [workspace])
   const summary = useMemo(() => summarizeModel(model), [model])
+  const readiness = useMemo(() => getRouteReadiness(model), [model])
+
+  useEffect(() => {
+    saveWorkspace(workspace)
+  }, [workspace])
 
   const grouped = useMemo(
     () =>
@@ -70,22 +88,31 @@ function App() {
     [model],
   )
 
+  const updateModel = (updater: Parameters<typeof updateActiveModel>[1]) => {
+    setWorkspace((current) => updateActiveModel(current, updater))
+  }
+
   const submit = (event: FormEvent) => {
     event.preventDefault()
     if (!input.trim()) return
-    setModel((current) => perceiveInput(current, input))
+    updateModel((current) => perceiveInput(current, input))
     setInput('')
   }
 
   const updateBelief = (beliefId: string, state: BeliefState) => {
-    setModel((current) => setBeliefState(current, beliefId, state))
+    updateModel((current) => setBeliefState(current, beliefId, state))
+  }
+
+  const reset = () => {
+    setWorkspace(clearWorkspace('deer'))
+    setInput('')
   }
 
   return (
     <main>
       <header className="site-header">
         <div className="brand">PERCEPTION</div>
-        <div className="header-status"><span /> User/Goal Model v0.1</div>
+        <div className="header-status"><span /> User/Goal Model v0.2 · persistent</div>
       </header>
 
       <section className="hero">
@@ -110,6 +137,7 @@ function App() {
             <p className="eyebrow"><Eye size={14} /> WHAT PERCEPTION SEES</p>
             <h2 id="model-title">My current model of this goal</h2>
             <p>{model.goal.currentReality}</p>
+            <p><small>Continuity is active on this device. Perception restores this project model when you return.</small></p>
           </div>
           <div className="certainty">
             <strong>{summary.certainty}%</strong>
@@ -146,27 +174,33 @@ function App() {
         <div className="route-panel__title">
           <div>
             <p className="eyebrow">REALITY ROUTE</p>
-            <h2>LEVEL 1 — UNDERSTANDING</h2>
+            <h2>LEVEL {readiness.level} — {readiness.label}</h2>
           </div>
           <span className="you-are-here">YOU ARE HERE</span>
         </div>
         <div className="route-line" aria-label="Route to Reality">
-          {['IDEA', 'UNDERSTOOD', 'MAPPED', 'ROUTED', 'BUILT', 'CONNECTED', 'EXECUTED', 'VERIFIED', 'REALIZED'].map((step, index) => (
-            <div className={`route-node ${index === 0 ? 'done' : index === 1 ? 'active' : ''}`} key={step}>
-              <span>{index === 0 ? '✓' : index + 1}</span>
+          {routeSteps.map((step, index) => (
+            <div
+              className={`route-node ${index < readiness.level ? 'done' : index === readiness.level ? 'active' : ''}`}
+              key={step}
+            >
+              <span>{index < readiness.level ? '✓' : index + 1}</span>
               <small>{step}</small>
             </div>
           ))}
         </div>
         <div className="distance">
           <HelpCircle size={17} />
-          <div><strong>Distance to Reality:</strong> intent still needs to be resolved before a reliable route should be selected.</div>
+          <div>
+            <strong>Distance to Reality:</strong> {readiness.reason}{' '}
+            <small>{readiness.trustedSignals} trusted signals · {readiness.unresolvedSignals} unresolved · {readiness.correctedSignals} corrected</small>
+          </div>
         </div>
       </section>
 
       <footer>
         <p><strong>Integrity rule:</strong> Perception never silently upgrades a guess into a fact.</p>
-        <button type="button" onClick={() => setModel(createModel('deer'))}><RotateCcw size={14} /> Reset deer test</button>
+        <button type="button" onClick={reset}><RotateCcw size={14} /> Reset deer test</button>
       </footer>
     </main>
   )
