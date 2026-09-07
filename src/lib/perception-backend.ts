@@ -125,10 +125,10 @@ export async function getSession(): Promise<Session | null> {
 
 export async function requestEmailSignIn(email: string): Promise<void> {
   const client = requireBackend()
-  const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined
+  const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/?auth=return` : undefined
   const { error } = await client.auth.signInWithOtp({
     email,
-    options: redirectTo ? { emailRedirectTo: redirectTo } : undefined,
+    options: redirectTo ? { emailRedirectTo: redirectTo, shouldCreateUser: true } : { shouldCreateUser: true },
   })
   if (error) throw error
 }
