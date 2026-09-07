@@ -46,7 +46,7 @@ export const stateOrder: BeliefState[] = [
   'rejected',
 ]
 
-export function createModel(topic = 'deer'): PerceptionModel {
+export function createModel(topic = ''): PerceptionModel {
   return {
     lastInput: topic,
     goal: {
@@ -118,16 +118,18 @@ export function perceiveInput(model: PerceptionModel, rawInput: string): Percept
   )
 
   const normalized = input.toLowerCase()
-  if (normalized.includes('i want') || normalized.includes('i need') || normalized.includes('my goal')) {
+  const hasExplicitGoal = normalized.includes('i want') || normalized.includes('i need') || normalized.includes('my goal')
+
+  if (hasExplicitGoal) {
     nextBeliefs.push(
       makeBelief({
         scope: 'project',
-        statement: 'The user has supplied an explicit desired outcome.',
-        state: 'inferred',
-        confidence: 0.82,
-        evidence: [`Goal-like language detected in: “${input}”`],
-        routeImpact: 'The Reality Route can begin narrowing around the stated outcome.',
-        needsConfirmation: true,
+        statement: `The desired reality is: “${input}”`,
+        state: 'observed',
+        confidence: 1,
+        evidence: [`Direct goal statement: “${input}”`],
+        routeImpact: 'This direct goal statement can safely anchor objective routing.',
+        needsConfirmation: false,
       }),
     )
   } else {
@@ -149,6 +151,8 @@ export function perceiveInput(model: PerceptionModel, rawInput: string): Percept
     lastInput: input,
     goal: {
       ...model.goal,
+      name: model.goal.name === 'Untitled idea' ? input.slice(0, 72) : model.goal.name,
+      desiredReality: hasExplicitGoal ? input : model.goal.desiredReality,
       currentReality: `Perception has ${nextBeliefs.filter((belief) => belief.state === 'observed').length} direct observations and is separating them from inference.`,
       beliefs: nextBeliefs,
     },

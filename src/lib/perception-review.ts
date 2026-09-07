@@ -31,7 +31,7 @@ export function reviewStaleness(
           ...belief,
           state: 'stale',
           needsConfirmation: true,
-          routeImpact: `${belief.routeImpact} This inference is old enough that it must be re-checked before routing.`
+          routeImpact: `${belief.routeImpact} This inference is old enough that it must be re-checked before routing.`,
         }
       }),
     },
@@ -44,9 +44,9 @@ export function getRouteReadiness(model: PerceptionModel): RouteReadiness {
     (belief) => belief.state === 'unknown' || belief.state === 'inferred' || belief.state === 'stale',
   ).length
   const correctedSignals = model.goal.beliefs.filter((belief) => belief.state === 'rejected').length
-  const hasConfirmedGoal = model.goal.beliefs.some(
-    (belief) => belief.scope === 'project' && belief.state === 'confirmed',
-  )
+  const hasTrustedGoal = model.goal.beliefs.some(
+    (belief) => belief.scope === 'project' && trusted(belief),
+  ) || model.goal.desiredReality !== 'Not known yet'
   const hasOpenUnknowns = model.goal.beliefs.some((belief) => belief.state === 'unknown')
   const hasUnconfirmedInference = model.goal.beliefs.some(
     (belief) => belief.state === 'inferred' && belief.needsConfirmation,
@@ -60,11 +60,11 @@ export function getRouteReadiness(model: PerceptionModel): RouteReadiness {
       canRoute: false,
       level: 0,
       label: 'IDEA',
-      reason: 'Perception needs at least one direct observation before it can model the goal.'
+      reason: 'Perception needs at least one direct observation before it can model the goal.',
     }
   }
 
-  if (!hasConfirmedGoal) {
+  if (!hasTrustedGoal) {
     return {
       trustedSignals,
       unresolvedSignals,
@@ -72,7 +72,7 @@ export function getRouteReadiness(model: PerceptionModel): RouteReadiness {
       canRoute: false,
       level: 1,
       label: 'UNDERSTOOD',
-      reason: 'The subject is understood, but the desired reality has not been explicitly confirmed.'
+      reason: 'The subject is understood, but the desired reality has not been directly stated or confirmed.',
     }
   }
 
@@ -84,7 +84,7 @@ export function getRouteReadiness(model: PerceptionModel): RouteReadiness {
       canRoute: false,
       level: 2,
       label: 'MAPPED',
-      reason: 'The goal is confirmed, but unresolved assumptions still affect the Reality Map.'
+      reason: 'The goal is trusted, but unresolved assumptions still affect the Reality Map.',
     }
   }
 
@@ -95,6 +95,6 @@ export function getRouteReadiness(model: PerceptionModel): RouteReadiness {
     canRoute: true,
     level: 3,
     label: 'ROUTED',
-    reason: 'Enough trusted evidence exists to select a route without silently relying on unresolved guesses.'
+    reason: 'Enough trusted evidence exists to select a low-risk route without silently relying on unresolved guesses.',
   }
 }
