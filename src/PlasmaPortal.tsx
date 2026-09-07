@@ -1,13 +1,22 @@
 import { useEffect, useRef } from 'react'
 
 export type PlasmaMode = 'idle' | 'hover' | 'focused' | 'typing' | 'charging' | 'absorbing' | 'auth' | 'transitioning'
+export type ExperienceMode = 'discover' | 'perceive' | 'search'
 
-export function PlasmaPortal({ mode, energy = 0 }: { mode: PlasmaMode; energy?: number }) {
+const experienceValues: Record<ExperienceMode, number> = {
+  discover: 0,
+  perceive: 1,
+  search: 2,
+}
+
+export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: PlasmaMode; experienceMode: ExperienceMode; energy?: number }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const modeRef = useRef(mode)
+  const experienceRef = useRef(experienceMode)
   const energyRef = useRef(energy)
 
   useEffect(() => { modeRef.current = mode }, [mode])
+  useEffect(() => { experienceRef.current = experienceMode }, [experienceMode])
   useEffect(() => { energyRef.current = energy }, [energy])
 
   useEffect(() => {
@@ -30,6 +39,7 @@ export function PlasmaPortal({ mode, energy = 0 }: { mode: PlasmaMode; energy?: 
       uniform float uFocus;
       uniform float uSubmit;
       uniform float uAuth;
+      uniform float uExperience;
 
       float hash(vec2 p) {
         p = fract(p * vec2(123.34, 456.21));
@@ -59,10 +69,21 @@ export function PlasmaPortal({ mode, energy = 0 }: { mode: PlasmaMode; energy?: 
         return v;
       }
 
-      vec3 palette(float t, float side) {
-        vec3 cool = mix(vec3(0.03, 0.55, 1.0), vec3(0.28, 0.96, 1.0), t);
-        vec3 warm = mix(vec3(1.0, 0.12, 0.02), vec3(1.0, 0.72, 0.18), t);
-        vec3 base = mix(cool, warm, side);
+      vec3 palette(float t, float side, float experience) {
+        vec3 discoverA = mix(vec3(0.01, 0.48, 0.29), vec3(0.12, 0.98, 0.67), t);
+        vec3 discoverB = mix(vec3(1.0, 0.42, 0.02), vec3(1.0, 0.86, 0.22), t);
+        vec3 discover = mix(discoverA, discoverB, side);
+
+        vec3 perceiveA = mix(vec3(0.03, 0.55, 1.0), vec3(0.28, 0.96, 1.0), t);
+        vec3 perceiveB = mix(vec3(1.0, 0.12, 0.02), vec3(1.0, 0.72, 0.18), t);
+        vec3 perceive = mix(perceiveA, perceiveB, side);
+
+        vec3 searchA = mix(vec3(0.01, 0.18, 0.92), vec3(0.12, 0.55, 1.0), t);
+        vec3 searchB = mix(vec3(0.0, 0.62, 0.94), vec3(0.45, 0.98, 1.0), t);
+        vec3 search = mix(searchA, searchB, side);
+
+        vec3 discoverToPerceive = mix(discover, perceive, smoothstep(0.0, 1.0, experience));
+        vec3 base = mix(discoverToPerceive, search, smoothstep(1.0, 2.0, experience));
         return mix(base, vec3(1.0), smoothstep(0.78, 1.0, t) * 0.35);
       }
 
@@ -94,7 +115,7 @@ export function PlasmaPortal({ mode, energy = 0 }: { mode: PlasmaMode; energy?: 
         float side = smoothstep(-0.16, 0.24, uv.x + (n1 - 0.5) * 0.18);
         float shimmer = 0.52 + 0.48 * sin((uv.x * 5.0 - uv.y * 3.0 + n2 * 4.0) + uTime * 0.35);
         float localEnergy = clamp(0.42 + 0.5 * turbulence + 0.22 * shimmer + uEnergy * 0.3 + uFocus * 0.16 + uSubmit * 0.5, 0.0, 1.0);
-        vec3 color = palette(localEnergy, side);
+        vec3 color = palette(localEnergy, side, uExperience);
 
         float halo = exp(-4.8 * abs(length(vec2(uv.x / 1.02, uv.y / 0.64)) - 1.0));
         halo *= 0.18 + uFocus * 0.12 + uEnergy * 0.11;
@@ -150,6 +171,7 @@ export function PlasmaPortal({ mode, energy = 0 }: { mode: PlasmaMode; energy?: 
     const focusUniform = gl.getUniformLocation(program, 'uFocus')
     const submitUniform = gl.getUniformLocation(program, 'uSubmit')
     const authUniform = gl.getUniformLocation(program, 'uAuth')
+    const experienceUniform = gl.getUniformLocation(program, 'uExperience')
 
     let raf = 0
     let start = performance.now()
@@ -161,6 +183,7 @@ export function PlasmaPortal({ mode, energy = 0 }: { mode: PlasmaMode; energy?: 
     let smoothFocus = 0
     let smoothSubmit = 0
     let smoothAuth = 0
+    let smoothExperience = experienceValues[experienceRef.current]
     let visible = document.visibilityState === 'visible'
 
     const onPointer = (event: PointerEvent) => {
@@ -198,10 +221,12 @@ export function PlasmaPortal({ mode, energy = 0 }: { mode: PlasmaMode; energy?: 
       const targetFocus = currentMode === 'focused' || currentMode === 'typing' ? 1 : 0
       const targetSubmit = currentMode === 'charging' ? 0.58 : currentMode === 'absorbing' || currentMode === 'transitioning' ? 1 : 0
       const targetAuth = currentMode === 'auth' ? 1 : 0
+      const targetExperience = experienceValues[experienceRef.current]
       smoothEnergy += (energyRef.current - smoothEnergy) * 0.08
       smoothFocus += (targetFocus - smoothFocus) * 0.07
       smoothSubmit += (targetSubmit - smoothSubmit) * 0.055
       smoothAuth += (targetAuth - smoothAuth) * 0.06
+      smoothExperience = reducedMotion ? targetExperience : smoothExperience + (targetExperience - smoothExperience) * 0.055
 
       gl.uniform2f(resolution, canvas.width, canvas.height)
       gl.uniform2f(pointerUniform, px, py)
@@ -210,6 +235,7 @@ export function PlasmaPortal({ mode, energy = 0 }: { mode: PlasmaMode; energy?: 
       gl.uniform1f(focusUniform, reducedMotion ? 0.0 : smoothFocus)
       gl.uniform1f(submitUniform, reducedMotion ? 0.0 : smoothSubmit)
       gl.uniform1f(authUniform, smoothAuth)
+      gl.uniform1f(experienceUniform, smoothExperience)
       gl.drawArrays(gl.TRIANGLES, 0, 6)
     }
 

@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, LogOut, Mail, Sparkles, X } from 'lucide-react'
+import { Check, Compass, LogOut, Mail, Search, Sparkles, X } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
-import { PlasmaPortal, type PlasmaMode } from './PlasmaPortal'
+import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPortal'
 import {
   backendConfigured,
   getLatestProjectWorld,
@@ -25,6 +25,36 @@ const targetStages = [
   'ACTION STARTED',
   'RESULT VERIFIED',
   'PROJECT WORLD UPDATED',
+]
+
+const experienceModes: Array<{
+  id: ExperienceMode
+  label: string
+  invitation: string
+  placeholder: string
+  action: string
+}> = [
+  {
+    id: 'discover',
+    label: 'DISCOVER',
+    invitation: 'FIND THE POSSIBILITY',
+    placeholder: "I don't know where to begin...",
+    action: 'DISCOVER',
+  },
+  {
+    id: 'perceive',
+    label: 'PERCEIVE',
+    invitation: 'THE FRONT DOOR TO IMAGINATION',
+    placeholder: 'I have an idea...',
+    action: 'PERCEIVE IT',
+  },
+  {
+    id: 'search',
+    label: 'SEARCH',
+    invitation: 'FIND WHAT IS TRUE AND USEFUL',
+    placeholder: "I'm looking for...",
+    action: 'SEARCH',
+  },
 ]
 
 function delay(ms: number) {
@@ -81,12 +111,14 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
+  const [experienceMode, setExperienceMode] = useState<ExperienceMode>('perceive')
   const [portalMode, setPortalMode] = useState<PlasmaMode>('idle')
   const [typingEnergy, setTypingEnergy] = useState(0)
   const resumeInFlight = useRef(false)
   const typingTimer = useRef<number | null>(null)
 
   const completedStages = useMemo(() => inferCompletedStages(world, runtimeResult), [world, runtimeResult])
+  const activeExperience = experienceModes.find((mode) => mode.id === experienceMode) ?? experienceModes[1]
 
   const loadLatestWorld = useCallback(async () => {
     const latest = await getLatestProjectWorld()
@@ -238,6 +270,14 @@ function App() {
     setPortalMode(input ? 'focused' : 'idle')
   }
 
+  const selectExperienceMode = (nextMode: ExperienceMode) => {
+    if (busy || nextMode === experienceMode) return
+    setExperienceMode(nextMode)
+    setError('')
+    setNotice('')
+    if (portalMode !== 'auth') setPortalMode(input ? 'focused' : 'idle')
+  }
+
   return (
     <main className="perception-shell">
       <header className="home-header">
@@ -255,27 +295,41 @@ function App() {
         )}
       </header>
 
-      <section className={`portal-hero portal-hero--${portalMode}`}>
+      <section className={`portal-hero portal-hero--${portalMode} portal-hero--experience-${experienceMode}`}>
         <div className="portal-stage">
-          <PlasmaPortal mode={portalMode} energy={typingEnergy} />
+          <PlasmaPortal mode={portalMode} experienceMode={experienceMode} energy={typingEnergy} />
           <div className="portal-fallback" aria-hidden="true" />
           <div className="portal-reflection" aria-hidden="true" />
 
           <div className="hero-content">
-            <p className="hero-kicker">THE FRONT DOOR TO IMAGINATION</p>
+            <p className="hero-kicker">{activeExperience.invitation}</p>
+            <div className="experience-switcher" role="group" aria-label="Choose how Perception helps">
+              {experienceModes.map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  aria-pressed={experienceMode === mode.id}
+                  className={experienceMode === mode.id ? 'experience-tab experience-tab--active' : 'experience-tab'}
+                  onClick={() => selectExperienceMode(mode.id)}
+                  disabled={busy}
+                >
+                  {mode.label}
+                </button>
+              ))}
+            </div>
             <form className="hero-input-shell" onSubmit={submit}>
               <input
                 value={input}
                 onChange={(event) => onInputChange(event.target.value)}
                 onFocus={() => { if (portalMode !== 'auth') setPortalMode('focused') }}
                 onBlur={() => { if (!input && portalMode !== 'auth') setPortalMode('idle') }}
-                placeholder="I have an idea..."
-                aria-label="Tell Perception your idea"
+                placeholder={activeExperience.placeholder}
+                aria-label={`${activeExperience.label}: ${activeExperience.placeholder}`}
                 disabled={busy}
               />
               <button type="submit" disabled={busy || !input.trim()}>
-                <span>{busy ? 'PERCEIVING' : 'PERCEIVE IT'}</span>
-                <Sparkles size={15} />
+                <span>{busy ? 'WORKING' : activeExperience.action}</span>
+                {experienceMode === 'discover' ? <Compass size={15} /> : experienceMode === 'search' ? <Search size={15} /> : <Sparkles size={15} />}
               </button>
             </form>
             <p className="track-line">SEE <span>•</span> HEAR <span>•</span> UNDERSTAND <span>•</span> BUILD</p>
