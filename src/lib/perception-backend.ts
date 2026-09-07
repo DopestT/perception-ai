@@ -3,7 +3,10 @@ import { createClient, type Session } from '@supabase/supabase-js'
 export const PERCEPTION_SUPABASE_URL =
   import.meta.env.VITE_SUPABASE_URL || 'https://zxmdfmiueapjhktqchts.supabase.co'
 
-const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || ''
+// Supabase publishable keys are intentionally browser-safe and remain RLS-scoped.
+// Deployment environments can override this canonical key without changing source.
+const publishableKey =
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_gwuUH36fdhOFrNZH7gUuKQ_XaV9iHBg'
 
 export const backendConfigured = Boolean(PERCEPTION_SUPABASE_URL && publishableKey)
 
@@ -108,7 +111,7 @@ export type ObjectiveRuntimeResult = {
 
 function requireBackend() {
   if (!supabase) {
-    throw new Error('Perception backend is not configured. Set VITE_SUPABASE_PUBLISHABLE_KEY.')
+    throw new Error('Perception backend is not configured.')
   }
   return supabase
 }
