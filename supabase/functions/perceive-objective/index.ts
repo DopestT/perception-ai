@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { governTask } from '../_shared/token-efficiency.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -51,6 +52,16 @@ Deno.serve(async (req: Request) => {
       auth: { persistSession: false, autoRefreshToken: false },
     })
 
+    const { data: policy } = await admin
+      .from('perception_token_policies')
+      .select('enabled, default_tier')
+      .eq('user_id', userData.user.id)
+      .is('project_id', null)
+      .maybeSingle()
+
+    const tokenDecision = governTask({ statement, capability: 'reason', risk: 'low' })
+    const costControlEnabled = policy?.enabled ?? true
+
     const { data, error } = await admin.rpc('perception_submit_objective_internal', {
       p_user_id: userData.user.id,
       p_statement: statement,
@@ -61,7 +72,47 @@ Deno.serve(async (req: Request) => {
       return json({ error: 'Objective runtime failed' }, 500)
     }
 
-    return json(data)
+    const runtimeResult = data && typeof data === 'object' && !Array.isArray(data)
+      ? data as Record<string, unknown>
+      : {}
+    const projectId = typeof runtimeResult.project_id === 'string' ? runtimeResult.project_id : null
+    const objectiveId = typeof runtimeResult.objective_id === 'string' ? runtimeResult.objective_id : null
+
+    if (projectId) {
+      const { error: decisionError } = await admin.from('perception_token_decisions').insert({
+        user_id: userData.user.id,
+        project_id: projectId,
+        objective_id: objectiveId,
+        capability: 'reason',
+        budget_tier: costControlEnabled ? tokenDecision.tier : 'max',
+        model_lane: costControlEnabled ? tokenDecision.modelLane : 'deep',
+        max_context_tokens: costControlEnabled ? tokenDecision.maxContextTokens : 32000,
+        max_output_tokens: costControlEnabled ? tokenDecision.maxOutputTokens : 4000,
+        estimated_input_tokens: tokenDecision.estimatedInputTokens,
+        reasons: costControlEnabled
+          ? tokenDecision.reasons
+          : ['Automatic cost control is disabled by the user policy'],
+      })
+
+      if (decisionError) {
+        console.error('Perception token decision telemetry failed', {
+          code: decisionError.code,
+          message: decisionError.message,
+        })
+      }
+    }
+
+    return json({
+      ...runtimeResult,
+      token_control: {
+        enabled: costControlEnabled,
+        budget_tier: costControlEnabled ? tokenDecision.tier : 'max',
+        model_lane: costControlEnabled ? tokenDecision.modelLane : 'deep',
+        max_context_tokens: costControlEnabled ? tokenDecision.maxContextTokens : 32000,
+        max_output_tokens: costControlEnabled ? tokenDecision.maxOutputTokens : 4000,
+        estimated_input_tokens: tokenDecision.estimatedInputTokens,
+      },
+    })
   } catch (error) {
     console.error('Perception edge failure', error instanceof Error ? error.message : 'unknown error')
     return json({ error: 'Unexpected runtime failure' }, 500)
