@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useState } from 'react'
-import { ArrowDown, ArrowRight, ArrowUp, BarChart3, CheckCircle2, CircleDot, Link2, Scale } from 'lucide-react'
+import { ArrowDown, ArrowRight, ArrowUp, BarChart3, BrainCircuit, CheckCircle2, CircleDot, Link2, Scale } from 'lucide-react'
 import type { Forecast, ForecastCalibration, ForecastModelState } from './lib/perception-backend'
 import './forecast.css'
 
@@ -27,17 +27,23 @@ export function ForecastPanel({
   calibration,
   resolving,
   attachingMarket,
+  runningIntelligence,
   marketNote,
+  intelligenceNote,
   onResolve,
   onAttachMarket,
+  onRunIntelligence,
 }: {
   forecast: Forecast
   calibration: ForecastCalibration | null
   resolving: boolean
   attachingMarket: boolean
+  runningIntelligence: boolean
   marketNote?: string
+  intelligenceNote?: string
   onResolve: (outcome: boolean) => void
   onAttachMarket: (ticker: string) => void
+  onRunIntelligence: () => void
 }) {
   const [ticker, setTicker] = useState('')
   const evidenceCount = forecast.supporting_evidence.length + forecast.contradicting_evidence.length + forecast.watch_signals.length
@@ -55,6 +61,12 @@ export function ForecastPanel({
     if (!normalized || attachingMarket) return
     onAttachMarket(normalized)
   }
+
+  const allEvidence = useMemo(() => [
+    ...forecast.supporting_evidence.map((item) => ({ ...item, stance: 'FOR' })),
+    ...forecast.contradicting_evidence.map((item) => ({ ...item, stance: 'AGAINST' })),
+    ...forecast.watch_signals.map((item) => ({ ...item, stance: 'WATCH' })),
+  ].sort((a, b) => Number(b.score || 0) - Number(a.score || 0)).slice(0, 8), [forecast])
 
   return (
     <section className="forecast-section" id="forecast-result">
@@ -109,10 +121,24 @@ export function ForecastPanel({
       </div>
 
       {forecast.status === 'open' && (
+        <div className="forecast-auto-run">
+          <div>
+            <p className="card-label"><BrainCircuit size={14} /> AUTONOMOUS INTELLIGENCE</p>
+            <h3>Find the signals for me.</h3>
+            <p>Perception searches for matching prediction markets, recent public evidence, and usable internal base rates, then recalculates consensus while recording its abstentions.</p>
+          </div>
+          <button type="button" onClick={onRunIntelligence} disabled={runningIntelligence || attachingMarket}>
+            <BrainCircuit size={16} /> {runningIntelligence ? 'SCOUTING…' : 'RUN INTELLIGENCE'}
+          </button>
+          {intelligenceNote && <small>{intelligenceNote}</small>}
+        </div>
+      )}
+
+      {forecast.status === 'open' && (
         <div className="forecast-market-link">
           <div>
-            <p className="card-label"><Link2 size={13} /> EXTERNAL MARKET SIGNAL</p>
-            <p>Attach a matching Kalshi market ticker. Perception records the public market probability as one weighted input; it never places a trade.</p>
+            <p className="card-label"><Link2 size={13} /> MANUAL MARKET SIGNAL</p>
+            <p>Optional correction path: attach a specific Kalshi ticker yourself. Perception records the market probability as one weighted input and never places a trade.</p>
           </div>
           <form onSubmit={submitTicker}>
             <input
@@ -120,10 +146,10 @@ export function ForecastPanel({
               onChange={(event) => setTicker(event.target.value)}
               placeholder="Kalshi market ticker"
               aria-label="Kalshi market ticker"
-              disabled={attachingMarket}
+              disabled={attachingMarket || runningIntelligence}
               autoCapitalize="characters"
             />
-            <button type="submit" disabled={attachingMarket || !ticker.trim()}>
+            <button type="submit" disabled={attachingMarket || runningIntelligence || !ticker.trim()}>
               <BarChart3 size={15} /> {attachingMarket ? 'READING…' : 'ADD SIGNAL'}
             </button>
           </form>
@@ -154,20 +180,16 @@ export function ForecastPanel({
           <article className="forecast-intelligence-card">
             <p className="card-label">STRONGEST EVIDENCE</p>
             <div className="forecast-evidence-list">
-              {[...forecast.supporting_evidence.map((item) => ({ ...item, stance: 'FOR' })),
-                ...forecast.contradicting_evidence.map((item) => ({ ...item, stance: 'AGAINST' }))]
-                .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
-                .slice(0, 6)
-                .map((item, index) => (
-                  <div className="forecast-evidence-row" key={`${item.source_ref || item.label || 'evidence'}-${index}`}>
-                    <span>{item.stance}</span>
-                    <div>
-                      <strong>{String(item.label || 'Signal')}</strong>
-                      <small>{String(item.source || item.source_kind || 'source')} · strength {pct(Number(item.score || 0))}</small>
-                    </div>
+              {allEvidence.map((item, index) => (
+                <div className="forecast-evidence-row" key={`${item.source_ref || item.label || 'evidence'}-${index}`}>
+                  <span>{item.stance}</span>
+                  <div>
+                    <strong>{String(item.label || 'Signal')}</strong>
+                    <small>{String(item.source || item.source_kind || 'source')} · strength {pct(Number(item.score || 0))}</small>
                   </div>
-                ))}
-              {!forecast.supporting_evidence.length && !forecast.contradicting_evidence.length && <p className="forecast-empty-copy">No directional evidence recorded yet.</p>}
+                </div>
+              ))}
+              {!allEvidence.length && <p className="forecast-empty-copy">No evidence recorded yet.</p>}
             </div>
           </article>
         </div>
@@ -180,8 +202,8 @@ export function ForecastPanel({
             <p>Use only when the event has objectively resolved. This locks the outcome and calculates the Brier score.</p>
           </div>
           <div className="forecast-resolution-actions">
-            <button type="button" disabled={resolving} onClick={() => onResolve(true)}><CheckCircle2 size={15} /> YES</button>
-            <button type="button" disabled={resolving} onClick={() => onResolve(false)}><Scale size={15} /> NO</button>
+            <button type="button" disabled={resolving || runningIntelligence} onClick={() => onResolve(true)}><CheckCircle2 size={15} /> YES</button>
+            <button type="button" disabled={resolving || runningIntelligence} onClick={() => onResolve(false)}><Scale size={15} /> NO</button>
           </div>
         </div>
       ) : (

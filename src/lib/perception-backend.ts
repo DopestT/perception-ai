@@ -3,8 +3,6 @@ import { createClient, type Session } from '@supabase/supabase-js'
 export const PERCEPTION_SUPABASE_URL =
   import.meta.env.VITE_SUPABASE_URL || 'https://zxmdfmiueapjhktqchts.supabase.co'
 
-// Supabase publishable keys are intentionally browser-safe and remain RLS-scoped.
-// Deployment environments can override this canonical key without changing source.
 const publishableKey =
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_gwuUH36fdhOFrNZH7gUuKQ_XaV9iHBg'
 
@@ -99,6 +97,37 @@ export type ForecastIntelligenceResult = {
     evidence_count?: number
     market_signal_id?: string
   }
+}
+
+export type AutonomousForecastResult = {
+  ok: boolean
+  action: 'autonomous_run'
+  forecast: Forecast
+  consensus?: {
+    model_count?: number
+    disagreement?: number | null
+    evidence_count?: number
+    [key: string]: unknown
+  }
+  markets: Array<{
+    provider: 'kalshi' | 'polymarket'
+    ticker: string
+    title: string
+    probability: number
+    match_score: number
+    weight: number
+  }>
+  news: {
+    recorded: number
+    sources: string[]
+  }
+  base_rate: null | {
+    probability: number
+    matched_forecasts: number
+    confidence: number
+    weight: number
+  }
+  abstentions: string[]
 }
 
 export type ProjectWorld = {
@@ -209,9 +238,7 @@ type ForecastRuntimeResult = {
 }
 
 function requireBackend() {
-  if (!supabase) {
-    throw new Error('Perception backend is not configured.')
-  }
+  if (!supabase) throw new Error('Perception backend is not configured.')
   return supabase
 }
 
@@ -278,6 +305,16 @@ export async function attachKalshiMarketSignal(forecastId: string, ticker: strin
   })
   if (error) throw error
   if (!data?.ok || !data.result?.forecast) throw new Error('Forecast market signal returned no usable result.')
+  return data
+}
+
+export async function runAutonomousForecast(forecastId: string): Promise<AutonomousForecastResult> {
+  const client = requireBackend()
+  const { data, error } = await client.functions.invoke<AutonomousForecastResult>('forecast-intelligence', {
+    body: { action: 'autonomous_run', forecast_id: forecastId },
+  })
+  if (error) throw error
+  if (!data?.ok || !data.forecast) throw new Error('Autonomous forecast run returned no usable result.')
   return data
 }
 
