@@ -71,6 +71,29 @@ export type ForecastCalibration = {
   worst_possible: number
 }
 
+export type ForecastCalibrationProfile = {
+  scope_type: 'global' | 'model_key' | 'model_family' | 'provider' | 'horizon' | 'evidence_kind'
+  scope_key: string
+  sample_count: number
+  mean_brier: number | null
+  posterior_brier: number | null
+  directional_accuracy: number | null
+  posterior_accuracy: number | null
+  weight_multiplier: number
+  last_scored_at: string | null
+}
+
+export type ForecastCalibrationDashboard = {
+  resolved_forecasts: number
+  model_score_count: number
+  evidence_score_count: number
+  mean_model_brier: number | null
+  learning_stage: 'cold_start' | 'warming' | 'calibrating' | 'mature'
+  profiles: ForecastCalibrationProfile[]
+  neutral_brier_baseline: number
+  shrinkage_prior_samples: number
+}
+
 export type ForecastMarketSignal = {
   ticker: string
   title: string
@@ -335,6 +358,22 @@ export async function getForecastCalibration(): Promise<ForecastCalibration> {
   const { data, error } = await client.rpc('perception_forecast_calibration')
   if (error) throw error
   return (data || { resolved_count: 0, mean_brier_score: null, best_possible: 0, worst_possible: 1 }) as ForecastCalibration
+}
+
+export async function getForecastCalibrationDashboard(): Promise<ForecastCalibrationDashboard> {
+  const client = requireBackend()
+  const { data, error } = await client.rpc('perception_forecast_calibration_dashboard')
+  if (error) throw error
+  return (data || {
+    resolved_forecasts: 0,
+    model_score_count: 0,
+    evidence_score_count: 0,
+    mean_model_brier: null,
+    learning_stage: 'cold_start',
+    profiles: [],
+    neutral_brier_baseline: 0.25,
+    shrinkage_prior_samples: 12,
+  }) as ForecastCalibrationDashboard
 }
 
 export async function getProjectWorld(projectId: string): Promise<ProjectWorld> {
