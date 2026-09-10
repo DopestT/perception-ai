@@ -20,6 +20,42 @@ export const supabase = backendConfigured
     })
   : null
 
+export type ForecastEvidence = {
+  label?: string
+  source?: string
+  score?: number
+  [key: string]: unknown
+}
+
+export type Forecast = {
+  id: string
+  user_id: string
+  project_id: string
+  question: string
+  deadline: string
+  original_probability: number
+  current_probability: number
+  confidence: 'low' | 'medium' | 'high'
+  trend: 'down' | 'steady' | 'up'
+  supporting_evidence: ForecastEvidence[]
+  contradicting_evidence: ForecastEvidence[]
+  watch_signals: ForecastEvidence[]
+  model_breakdown: Record<string, unknown>
+  status: 'open' | 'resolved' | 'cancelled'
+  outcome: boolean | null
+  brier_score: number | null
+  resolved_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ForecastCalibration = {
+  resolved_count: number
+  mean_brier_score: number | null
+  best_possible: number
+  worst_possible: number
+}
+
 export type ProjectWorld = {
   project: {
     id: string
@@ -89,6 +125,17 @@ export type ProjectWorld = {
     details: Record<string, unknown>
     checked_at: string
   }>
+  forecasts?: Forecast[]
+  forecast_versions?: Array<{
+    id: string
+    forecast_id: string
+    version: number
+    probability: number
+    confidence: 'low' | 'medium' | 'high'
+    trend: 'down' | 'steady' | 'up'
+    rationale: string
+    created_at: string
+  }>
   events: Array<{
     id: string
     event_type: string
@@ -107,6 +154,13 @@ export type ObjectiveRuntimeResult = {
   artifact_id?: string
   verification_id?: string
   stage?: string
+}
+
+type ForecastRuntimeResult = {
+  ok: boolean
+  project_id?: string
+  forecast: Forecast
+  version?: number
 }
 
 function requireBackend() {
@@ -147,6 +201,48 @@ export async function submitObjective(statement: string): Promise<ObjectiveRunti
   if (error) throw error
   if (!data) throw new Error('Perception runtime returned no result.')
   return data
+}
+
+export async function createForecast(question: string, deadline: string, probability = 0.5): Promise<ForecastRuntimeResult> {
+  const client = requireBackend()
+  const { data, error } = await client.rpc('perception_create_forecast', {
+    p_question: question,
+    p_deadline: deadline,
+    p_probability: probability,
+  })
+  if (error) throw error
+  if (!data) throw new Error('Forecast runtime returned no result.')
+  return data as ForecastRuntimeResult
+}
+
+export async function resolveForecast(forecastId: string, outcome: boolean): Promise<ForecastRuntimeResult> {
+  const client = requireBackend()
+  const { data, error } = await client.rpc('perception_resolve_forecast', {
+    p_forecast_id: forecastId,
+    p_outcome: outcome,
+  })
+  if (error) throw error
+  if (!data) throw new Error('Forecast resolution returned no result.')
+  return data as ForecastRuntimeResult
+}
+
+export async function getLatestForecast(): Promise<Forecast | null> {
+  const client = requireBackend()
+  const { data, error } = await client
+    .from('perception_forecasts')
+    .select('*')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw error
+  return data ? (data as Forecast) : null
+}
+
+export async function getForecastCalibration(): Promise<ForecastCalibration> {
+  const client = requireBackend()
+  const { data, error } = await client.rpc('perception_forecast_calibration')
+  if (error) throw error
+  return (data || { resolved_count: 0, mean_brier_score: null, best_possible: 0, worst_possible: 1 }) as ForecastCalibration
 }
 
 export async function getProjectWorld(projectId: string): Promise<ProjectWorld> {
