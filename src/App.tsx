@@ -14,6 +14,7 @@ import {
   getSession,
   requestEmailSignIn,
   resolveForecast,
+  runAutonomousForecast,
   signOut,
   submitObjective,
   supabase,
@@ -42,34 +43,10 @@ const experienceModes: Array<{
   placeholder: string
   action: string
 }> = [
-  {
-    id: 'discover',
-    label: 'DISCOVER',
-    invitation: 'FIND THE POSSIBILITY',
-    placeholder: "I don't know where to begin...",
-    action: 'DISCOVER',
-  },
-  {
-    id: 'perceive',
-    label: 'PERCEIVE',
-    invitation: 'THE FRONT DOOR TO IMAGINATION',
-    placeholder: 'I have an idea...',
-    action: 'PERCEIVE IT',
-  },
-  {
-    id: 'search',
-    label: 'SEARCH',
-    invitation: 'FIND WHAT IS TRUE AND USEFUL',
-    placeholder: "I'm looking for...",
-    action: 'SEARCH',
-  },
-  {
-    id: 'forecast',
-    label: 'FORECAST',
-    invitation: 'MAP WHAT IS MOST LIKELY NEXT',
-    placeholder: 'Will this happen by the resolution date?',
-    action: 'FORECAST',
-  },
+  { id: 'discover', label: 'DISCOVER', invitation: 'FIND THE POSSIBILITY', placeholder: "I don't know where to begin...", action: 'DISCOVER' },
+  { id: 'perceive', label: 'PERCEIVE', invitation: 'THE FRONT DOOR TO IMAGINATION', placeholder: 'I have an idea...', action: 'PERCEIVE IT' },
+  { id: 'search', label: 'SEARCH', invitation: 'FIND WHAT IS TRUE AND USEFUL', placeholder: "I'm looking for...", action: 'SEARCH' },
+  { id: 'forecast', label: 'FORECAST', invitation: 'MAP WHAT IS MOST LIKELY NEXT', placeholder: 'Will this happen by the resolution date?', action: 'FORECAST' },
 ]
 
 function delay(ms: number) {
@@ -145,7 +122,9 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [resolvingForecast, setResolvingForecast] = useState(false)
   const [attachingMarket, setAttachingMarket] = useState(false)
+  const [runningIntelligence, setRunningIntelligence] = useState(false)
   const [marketNote, setMarketNote] = useState('')
+  const [intelligenceNote, setIntelligenceNote] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState('')
@@ -188,7 +167,6 @@ function App() {
       setPortalMode('absorbing')
       const result = await request
       if (!result.ok || !result.project_id) throw new Error(result.stage || 'Perception could not verify the first action.')
-
       const nextWorld = await getProjectWorld(result.project_id)
       setRuntimeResult(result)
       setWorld(nextWorld)
@@ -225,6 +203,7 @@ function App() {
     setError('')
     setNotice('')
     setMarketNote('')
+    setIntelligenceNote('')
     setPortalMode('charging')
 
     try {
@@ -247,7 +226,7 @@ function App() {
       setPortalMode('transitioning')
       await delay(620)
       setPortalMode('idle')
-      setNotice('Forecast opened at a neutral 50% prior. Add independent signals to move the consensus.')
+      setNotice('Forecast opened. Run autonomous intelligence to find independent signals.')
       window.setTimeout(() => document.getElementById('forecast-result')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
     } catch (cause) {
       setPortalMode('focused')
@@ -265,7 +244,6 @@ function App() {
     }
 
     let active = true
-
     const acceptSession = async (nextSession: Session | null) => {
       if (!active) return
       setSession(nextSession)
@@ -275,11 +253,8 @@ function App() {
       const pending = readPendingObjective()
       if (pending) {
         setExperienceMode(pending.mode)
-        if (pending.mode === 'forecast') {
-          await processForecast(pending.statement, pending.deadline || defaultForecastDeadline())
-        } else {
-          await processObjective(pending.statement)
-        }
+        if (pending.mode === 'forecast') await processForecast(pending.statement, pending.deadline || defaultForecastDeadline())
+        else await processObjective(pending.statement)
       } else {
         await Promise.all([loadLatestWorld(), loadForecastState()])
       }
@@ -287,12 +262,8 @@ function App() {
 
     getSession()
       .then(acceptSession)
-      .catch((cause) => {
-        if (active) setError(cause instanceof Error ? cause.message : 'Could not restore the Perception session.')
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
+      .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'Could not restore the Perception session.') })
+      .finally(() => { if (active) setLoading(false) })
 
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (!active) return
@@ -348,6 +319,31 @@ function App() {
     }
   }
 
+  const handleRunIntelligence = async () => {
+    if (!forecast || forecast.status !== 'open' || runningIntelligence) return
+    setRunningIntelligence(true)
+    setError('')
+    setIntelligenceNote('')
+    try {
+      const result = await runAutonomousForecast(forecast.id)
+      const nextWorld = await getProjectWorld(forecast.project_id)
+      setForecast(result.forecast)
+      setWorld(nextWorld)
+      const providers = result.markets.map((market) => market.provider).join(' + ')
+      const pieces = [
+        result.markets.length ? `${result.markets.length} market signal${result.markets.length === 1 ? '' : 's'} (${providers})` : 'no confident market match',
+        `${result.news.recorded} recent evidence item${result.news.recorded === 1 ? '' : 's'}`,
+        result.base_rate ? `internal base rate from ${result.base_rate.matched_forecasts} resolved analogs` : 'base-rate abstention',
+      ]
+      setIntelligenceNote(`${pieces.join(' · ')}. Consensus ${Math.round(result.forecast.current_probability * 100)}%.`)
+      setNotice('Autonomous forecast intelligence completed and the auditable consensus was updated.')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Perception could not complete the autonomous forecast run.')
+    } finally {
+      setRunningIntelligence(false)
+    }
+  }
+
   const handleAttachMarket = async (ticker: string) => {
     if (!forecast || attachingMarket || forecast.status !== 'open') return
     setAttachingMarket(true)
@@ -399,6 +395,7 @@ function App() {
       setForecast(null)
       setCalibration(null)
       setMarketNote('')
+      setIntelligenceNote('')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not sign out.')
     }
@@ -503,9 +500,12 @@ function App() {
           calibration={calibration}
           resolving={resolvingForecast}
           attachingMarket={attachingMarket}
+          runningIntelligence={runningIntelligence}
           marketNote={marketNote}
+          intelligenceNote={intelligenceNote}
           onResolve={handleResolveForecast}
           onAttachMarket={handleAttachMarket}
+          onRunIntelligence={handleRunIntelligence}
         />
       )}
 
