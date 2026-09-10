@@ -1,5 +1,6 @@
-import { ArrowDown, ArrowRight, ArrowUp, CheckCircle2, CircleDot, Scale } from 'lucide-react'
-import type { Forecast, ForecastCalibration } from './lib/perception-backend'
+import { FormEvent, useMemo, useState } from 'react'
+import { ArrowDown, ArrowRight, ArrowUp, BarChart3, CheckCircle2, CircleDot, Link2, Scale } from 'lucide-react'
+import type { Forecast, ForecastCalibration, ForecastModelState } from './lib/perception-backend'
 import './forecast.css'
 
 function pct(value: number) {
@@ -17,19 +18,43 @@ function TrendIcon({ trend }: { trend: Forecast['trend'] }) {
   return <ArrowRight size={15} />
 }
 
+function modelState(value: unknown): ForecastModelState | null {
+  return value && typeof value === 'object' ? value as ForecastModelState : null
+}
+
 export function ForecastPanel({
   forecast,
   calibration,
   resolving,
+  attachingMarket,
+  marketNote,
   onResolve,
+  onAttachMarket,
 }: {
   forecast: Forecast
   calibration: ForecastCalibration | null
   resolving: boolean
+  attachingMarket: boolean
+  marketNote?: string
   onResolve: (outcome: boolean) => void
+  onAttachMarket: (ticker: string) => void
 }) {
-  const evidenceCount = forecast.supporting_evidence.length + forecast.contradicting_evidence.length
+  const [ticker, setTicker] = useState('')
+  const evidenceCount = forecast.supporting_evidence.length + forecast.contradicting_evidence.length + forecast.watch_signals.length
   const score = forecast.brier_score
+  const consensus = modelState(forecast.model_breakdown._consensus)
+  const models = useMemo(() => Object.entries(forecast.model_breakdown).flatMap(([key, value]) => {
+    if (key === '_consensus') return []
+    const state = modelState(value)
+    return state?.probability != null ? [[key, state] as const] : []
+  }), [forecast.model_breakdown])
+
+  const submitTicker = (event: FormEvent) => {
+    event.preventDefault()
+    const normalized = ticker.trim()
+    if (!normalized || attachingMarket) return
+    onAttachMarket(normalized)
+  }
 
   return (
     <section className="forecast-section" id="forecast-result">
@@ -67,13 +92,13 @@ export function ForecastPanel({
         <article className="forecast-card">
           <p className="card-label">EVIDENCE SNAPSHOT</p>
           <h3>{evidenceCount} signals</h3>
-          <span>{forecast.supporting_evidence.length} supporting · {forecast.contradicting_evidence.length} contradicting</span>
+          <span>{forecast.supporting_evidence.length} supporting · {forecast.contradicting_evidence.length} contradicting · {forecast.watch_signals.length} neutral</span>
         </article>
 
         <article className="forecast-card">
-          <p className="card-label">MODEL STATE</p>
-          <h3>{Object.keys(forecast.model_breakdown).length ? 'ENSEMBLE' : 'PRIOR'}</h3>
-          <span>{Object.keys(forecast.model_breakdown).join(' · ') || 'neutral baseline'}</span>
+          <p className="card-label">ENSEMBLE</p>
+          <h3>{consensus?.model_count ?? (models.length || 'PRIOR')}</h3>
+          <span>{consensus?.model_count ? `independent model keys · disagreement ${pct(consensus.disagreement ?? 0)}` : 'waiting for independent signals'}</span>
         </article>
 
         <article className="forecast-card">
@@ -82,6 +107,71 @@ export function ForecastPanel({
           <span>{calibration?.resolved_count ? `${calibration.resolved_count} resolved · mean Brier ${calibration.mean_brier_score?.toFixed(4) ?? '—'}` : 'Builds after forecasts resolve'}</span>
         </article>
       </div>
+
+      {forecast.status === 'open' && (
+        <div className="forecast-market-link">
+          <div>
+            <p className="card-label"><Link2 size={13} /> EXTERNAL MARKET SIGNAL</p>
+            <p>Attach a matching Kalshi market ticker. Perception records the public market probability as one weighted input; it never places a trade.</p>
+          </div>
+          <form onSubmit={submitTicker}>
+            <input
+              value={ticker}
+              onChange={(event) => setTicker(event.target.value)}
+              placeholder="Kalshi market ticker"
+              aria-label="Kalshi market ticker"
+              disabled={attachingMarket}
+              autoCapitalize="characters"
+            />
+            <button type="submit" disabled={attachingMarket || !ticker.trim()}>
+              <BarChart3 size={15} /> {attachingMarket ? 'READING…' : 'ADD SIGNAL'}
+            </button>
+          </form>
+          {marketNote && <small>{marketNote}</small>}
+        </div>
+      )}
+
+      {(models.length > 0 || evidenceCount > 0) && (
+        <div className="forecast-intelligence-grid">
+          <article className="forecast-intelligence-card">
+            <div className="forecast-intelligence-heading">
+              <p className="card-label">MODEL DISAGREEMENT</p>
+              <span>{consensus?.disagreement != null ? pct(consensus.disagreement) : '—'}</span>
+            </div>
+            <div className="forecast-model-list">
+              {models.map(([key, model]) => (
+                <div className="forecast-model-row" key={key}>
+                  <div>
+                    <strong>{key}</strong>
+                    <small>{model.family || 'model'} · weight {typeof model.weight === 'number' ? model.weight.toFixed(2) : '—'}</small>
+                  </div>
+                  <span>{pct(model.probability ?? 0)}</span>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="forecast-intelligence-card">
+            <p className="card-label">STRONGEST EVIDENCE</p>
+            <div className="forecast-evidence-list">
+              {[...forecast.supporting_evidence.map((item) => ({ ...item, stance: 'FOR' })),
+                ...forecast.contradicting_evidence.map((item) => ({ ...item, stance: 'AGAINST' }))]
+                .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
+                .slice(0, 6)
+                .map((item, index) => (
+                  <div className="forecast-evidence-row" key={`${item.source_ref || item.label || 'evidence'}-${index}`}>
+                    <span>{item.stance}</span>
+                    <div>
+                      <strong>{String(item.label || 'Signal')}</strong>
+                      <small>{String(item.source || item.source_kind || 'source')} · strength {pct(Number(item.score || 0))}</small>
+                    </div>
+                  </div>
+                ))}
+              {!forecast.supporting_evidence.length && !forecast.contradicting_evidence.length && <p className="forecast-empty-copy">No directional evidence recorded yet.</p>}
+            </div>
+          </article>
+        </div>
+      )}
 
       {forecast.status === 'open' ? (
         <div className="forecast-resolution">

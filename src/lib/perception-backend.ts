@@ -23,7 +23,24 @@ export const supabase = backendConfigured
 export type ForecastEvidence = {
   label?: string
   source?: string
+  source_ref?: string
+  source_kind?: string
   score?: number
+  [key: string]: unknown
+}
+
+export type ForecastModelState = {
+  family?: string
+  probability?: number
+  weight?: number
+  confidence?: number
+  rationale?: string
+  metadata?: Record<string, unknown>
+  observed_at?: string
+  model_count?: number
+  weight_sum?: number
+  disagreement?: number
+  evidence_count?: number
   [key: string]: unknown
 }
 
@@ -40,7 +57,7 @@ export type Forecast = {
   supporting_evidence: ForecastEvidence[]
   contradicting_evidence: ForecastEvidence[]
   watch_signals: ForecastEvidence[]
-  model_breakdown: Record<string, unknown>
+  model_breakdown: Record<string, ForecastModelState | unknown>
   status: 'open' | 'resolved' | 'cancelled'
   outcome: boolean | null
   brier_score: number | null
@@ -54,6 +71,34 @@ export type ForecastCalibration = {
   mean_brier_score: number | null
   best_possible: number
   worst_possible: number
+}
+
+export type ForecastMarketSignal = {
+  ticker: string
+  title: string
+  implied_probability: number
+  yes_bid: number | null
+  yes_ask: number | null
+  last_price: number | null
+  spread: number | null
+  volume: number
+  confidence: number
+  manipulation_risk: number
+}
+
+export type ForecastIntelligenceResult = {
+  ok: boolean
+  provider: 'kalshi'
+  market: ForecastMarketSignal
+  result: {
+    ok: boolean
+    forecast: Forecast
+    version?: number
+    model_count?: number
+    disagreement?: number | null
+    evidence_count?: number
+    market_signal_id?: string
+  }
 }
 
 export type ProjectWorld = {
@@ -224,6 +269,16 @@ export async function resolveForecast(forecastId: string, outcome: boolean): Pro
   if (error) throw error
   if (!data) throw new Error('Forecast resolution returned no result.')
   return data as ForecastRuntimeResult
+}
+
+export async function attachKalshiMarketSignal(forecastId: string, ticker: string): Promise<ForecastIntelligenceResult> {
+  const client = requireBackend()
+  const { data, error } = await client.functions.invoke<ForecastIntelligenceResult>('forecast-intelligence', {
+    body: { action: 'kalshi_market', forecast_id: forecastId, ticker },
+  })
+  if (error) throw error
+  if (!data?.ok || !data.result?.forecast) throw new Error('Forecast market signal returned no usable result.')
+  return data
 }
 
 export async function getLatestForecast(): Promise<Forecast | null> {

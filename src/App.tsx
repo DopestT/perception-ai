@@ -4,6 +4,7 @@ import type { Session } from '@supabase/supabase-js'
 import { ForecastPanel } from './ForecastPanel'
 import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPortal'
 import {
+  attachKalshiMarketSignal,
   backendConfigured,
   createForecast,
   getForecastCalibration,
@@ -143,6 +144,8 @@ function App() {
   const [authSent, setAuthSent] = useState(false)
   const [busy, setBusy] = useState(false)
   const [resolvingForecast, setResolvingForecast] = useState(false)
+  const [attachingMarket, setAttachingMarket] = useState(false)
+  const [marketNote, setMarketNote] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState('')
@@ -221,6 +224,7 @@ function App() {
     setBusy(true)
     setError('')
     setNotice('')
+    setMarketNote('')
     setPortalMode('charging')
 
     try {
@@ -243,7 +247,7 @@ function App() {
       setPortalMode('transitioning')
       await delay(620)
       setPortalMode('idle')
-      setNotice('Forecast opened at a neutral 50% prior. Evidence-backed model updates come next.')
+      setNotice('Forecast opened at a neutral 50% prior. Add independent signals to move the consensus.')
       window.setTimeout(() => document.getElementById('forecast-result')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
     } catch (cause) {
       setPortalMode('focused')
@@ -344,6 +348,26 @@ function App() {
     }
   }
 
+  const handleAttachMarket = async (ticker: string) => {
+    if (!forecast || attachingMarket || forecast.status !== 'open') return
+    setAttachingMarket(true)
+    setError('')
+    setMarketNote('')
+    try {
+      const result = await attachKalshiMarketSignal(forecast.id, ticker)
+      const nextForecast = result.result.forecast
+      const nextWorld = await getProjectWorld(forecast.project_id)
+      setForecast(nextForecast)
+      setWorld(nextWorld)
+      setMarketNote(`${result.market.title}: Kalshi ${Math.round(result.market.implied_probability * 100)}% · Perception consensus ${Math.round(nextForecast.current_probability * 100)}%.`)
+      setNotice('External prediction-market signal recorded and consensus recalculated.')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Perception could not attach that market signal.')
+    } finally {
+      setAttachingMarket(false)
+    }
+  }
+
   const handleResolveForecast = async (outcome: boolean) => {
     if (!forecast || resolvingForecast) return
     setResolvingForecast(true)
@@ -374,6 +398,7 @@ function App() {
       setRuntimeResult(null)
       setForecast(null)
       setCalibration(null)
+      setMarketNote('')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not sign out.')
     }
@@ -472,7 +497,17 @@ function App() {
         </div>
       </section>
 
-      {forecast && <ForecastPanel forecast={forecast} calibration={calibration} resolving={resolvingForecast} onResolve={handleResolveForecast} />}
+      {forecast && (
+        <ForecastPanel
+          forecast={forecast}
+          calibration={calibration}
+          resolving={resolvingForecast}
+          attachingMarket={attachingMarket}
+          marketNote={marketNote}
+          onResolve={handleResolveForecast}
+          onAttachMarket={handleAttachMarket}
+        />
+      )}
 
       {world && (
         <section className="world-section" id="project-world">
