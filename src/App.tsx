@@ -1,21 +1,28 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Compass, LogOut, Mail, Search, Sparkles, X } from 'lucide-react'
+import { Check, Clock3, Compass, LogOut, Mail, Search, Sparkles, X } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
+import { ForecastPanel } from './ForecastPanel'
 import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPortal'
 import {
   backendConfigured,
+  createForecast,
+  getForecastCalibration,
+  getLatestForecast,
   getLatestProjectWorld,
   getProjectWorld,
   getSession,
   requestEmailSignIn,
+  resolveForecast,
   signOut,
   submitObjective,
   supabase,
+  type Forecast,
+  type ForecastCalibration,
   type ObjectiveRuntimeResult,
   type ProjectWorld,
 } from './lib/perception-backend'
 
-const PENDING_OBJECTIVE_KEY = 'perception:pending-objective:v1'
+const PENDING_OBJECTIVE_KEY = 'perception:pending-objective:v2'
 const PENDING_TTL_MS = 30 * 60 * 1000
 const targetStages = [
   'UNDERSTOOD',
@@ -55,26 +62,51 @@ const experienceModes: Array<{
     placeholder: "I'm looking for...",
     action: 'SEARCH',
   },
+  {
+    id: 'forecast',
+    label: 'FORECAST',
+    invitation: 'MAP WHAT IS MOST LIKELY NEXT',
+    placeholder: 'Will this happen by the resolution date?',
+    action: 'FORECAST',
+  },
 ]
 
 function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
 }
 
-function savePendingObjective(statement: string) {
-  localStorage.setItem(PENDING_OBJECTIVE_KEY, JSON.stringify({ statement, savedAt: Date.now() }))
+function defaultForecastDeadline() {
+  const date = new Date()
+  date.setDate(date.getDate() + 30)
+  return date.toISOString().slice(0, 10)
 }
 
-function readPendingObjective(): string | null {
+type PendingObjective = {
+  statement: string
+  savedAt: number
+  mode: ExperienceMode
+  deadline?: string
+}
+
+function savePendingObjective(statement: string, mode: ExperienceMode, deadline?: string) {
+  localStorage.setItem(PENDING_OBJECTIVE_KEY, JSON.stringify({ statement, mode, deadline, savedAt: Date.now() }))
+}
+
+function readPendingObjective(): PendingObjective | null {
   try {
     const raw = localStorage.getItem(PENDING_OBJECTIVE_KEY)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as { statement?: string; savedAt?: number }
+    const parsed = JSON.parse(raw) as Partial<PendingObjective>
     if (!parsed.statement || !parsed.savedAt || Date.now() - parsed.savedAt > PENDING_TTL_MS) {
       localStorage.removeItem(PENDING_OBJECTIVE_KEY)
       return null
     }
-    return parsed.statement
+    return {
+      statement: parsed.statement,
+      savedAt: parsed.savedAt,
+      mode: parsed.mode || 'perceive',
+      deadline: parsed.deadline,
+    }
   } catch {
     localStorage.removeItem(PENDING_OBJECTIVE_KEY)
     return null
@@ -102,11 +134,15 @@ function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [world, setWorld] = useState<ProjectWorld | null>(null)
   const [runtimeResult, setRuntimeResult] = useState<ObjectiveRuntimeResult | null>(null)
+  const [forecast, setForecast] = useState<Forecast | null>(null)
+  const [calibration, setCalibration] = useState<ForecastCalibration | null>(null)
+  const [forecastDeadline, setForecastDeadline] = useState(defaultForecastDeadline)
   const [input, setInput] = useState('')
   const [email, setEmail] = useState('')
   const [authOpen, setAuthOpen] = useState(false)
   const [authSent, setAuthSent] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [resolvingForecast, setResolvingForecast] = useState(false)
   const [authBusy, setAuthBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState('')
@@ -123,6 +159,16 @@ function App() {
   const loadLatestWorld = useCallback(async () => {
     const latest = await getLatestProjectWorld()
     setWorld(latest)
+  }, [])
+
+  const loadForecastState = useCallback(async () => {
+    try {
+      const [latestForecast, nextCalibration] = await Promise.all([getLatestForecast(), getForecastCalibration()])
+      setForecast(latestForecast)
+      setCalibration(nextCalibration)
+    } catch (cause) {
+      console.warn('Perception forecast state is not available yet.', cause)
+    }
   }, [])
 
   const processObjective = useCallback(async (statement: string) => {
@@ -159,6 +205,55 @@ function App() {
     }
   }, [])
 
+  const processForecast = useCallback(async (question: string, deadline: string) => {
+    if (resumeInFlight.current) return
+    if (!deadline) {
+      setError('Choose a resolution date for this forecast.')
+      return
+    }
+    const deadlineDate = new Date(`${deadline}T23:59:59`)
+    if (Number.isNaN(deadlineDate.getTime()) || deadlineDate.getTime() <= Date.now()) {
+      setError('Forecast resolution date must be in the future.')
+      return
+    }
+
+    resumeInFlight.current = true
+    setBusy(true)
+    setError('')
+    setNotice('')
+    setPortalMode('charging')
+
+    try {
+      const request = createForecast(question, deadlineDate.toISOString(), 0.5)
+      await delay(280)
+      setPortalMode('absorbing')
+      const result = await request
+      if (!result.ok || !result.project_id) throw new Error('Perception could not open this forecast.')
+
+      const [nextWorld, nextCalibration] = await Promise.all([
+        getProjectWorld(result.project_id),
+        getForecastCalibration(),
+      ])
+      setRuntimeResult(null)
+      setForecast(result.forecast)
+      setCalibration(nextCalibration)
+      setWorld(nextWorld)
+      clearPendingObjective()
+      setInput('')
+      setPortalMode('transitioning')
+      await delay(620)
+      setPortalMode('idle')
+      setNotice('Forecast opened at a neutral 50% prior. Evidence-backed model updates come next.')
+      window.setTimeout(() => document.getElementById('forecast-result')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+    } catch (cause) {
+      setPortalMode('focused')
+      setError(cause instanceof Error ? cause.message : 'Perception could not create this forecast.')
+    } finally {
+      resumeInFlight.current = false
+      setBusy(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (!backendConfigured || !supabase) {
       setLoading(false)
@@ -175,9 +270,14 @@ function App() {
       setAuthSent(false)
       const pending = readPendingObjective()
       if (pending) {
-        await processObjective(pending)
+        setExperienceMode(pending.mode)
+        if (pending.mode === 'forecast') {
+          await processForecast(pending.statement, pending.deadline || defaultForecastDeadline())
+        } else {
+          await processObjective(pending.statement)
+        }
       } else {
-        await loadLatestWorld()
+        await Promise.all([loadLatestWorld(), loadForecastState()])
       }
     }
 
@@ -201,7 +301,7 @@ function App() {
       active = false
       authListener.subscription.unsubscribe()
     }
-  }, [loadLatestWorld, processObjective])
+  }, [loadForecastState, loadLatestWorld, processForecast, processObjective])
 
   useEffect(() => () => {
     if (typingTimer.current) window.clearTimeout(typingTimer.current)
@@ -213,7 +313,7 @@ function App() {
     if (!statement || busy) return
 
     if (!session) {
-      savePendingObjective(statement)
+      savePendingObjective(statement, experienceMode, experienceMode === 'forecast' ? forecastDeadline : undefined)
       setPortalMode('charging')
       await delay(260)
       setPortalMode('auth')
@@ -221,6 +321,10 @@ function App() {
       return
     }
 
+    if (experienceMode === 'forecast') {
+      await processForecast(statement, forecastDeadline)
+      return
+    }
     await processObjective(statement)
   }
 
@@ -240,6 +344,27 @@ function App() {
     }
   }
 
+  const handleResolveForecast = async (outcome: boolean) => {
+    if (!forecast || resolvingForecast) return
+    setResolvingForecast(true)
+    setError('')
+    try {
+      const result = await resolveForecast(forecast.id, outcome)
+      const [nextCalibration, nextWorld] = await Promise.all([
+        getForecastCalibration(),
+        getProjectWorld(forecast.project_id),
+      ])
+      setForecast(result.forecast)
+      setCalibration(nextCalibration)
+      setWorld(nextWorld)
+      setNotice(`Forecast resolved ${outcome ? 'YES' : 'NO'} and calibration updated.`)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Perception could not resolve this forecast.')
+    } finally {
+      setResolvingForecast(false)
+    }
+  }
+
   const logout = async () => {
     setError('')
     try {
@@ -247,6 +372,8 @@ function App() {
       setSession(null)
       setWorld(null)
       setRuntimeResult(null)
+      setForecast(null)
+      setCalibration(null)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not sign out.')
     }
@@ -329,15 +456,23 @@ function App() {
               />
               <button type="submit" disabled={busy || !input.trim()}>
                 <span>{busy ? 'WORKING' : activeExperience.action}</span>
-                {experienceMode === 'discover' ? <Compass size={15} /> : experienceMode === 'search' ? <Search size={15} /> : <Sparkles size={15} />}
+                {experienceMode === 'discover' ? <Compass size={15} /> : experienceMode === 'search' ? <Search size={15} /> : experienceMode === 'forecast' ? <Clock3 size={15} /> : <Sparkles size={15} />}
               </button>
             </form>
+            {experienceMode === 'forecast' && (
+              <div className="forecast-deadline-field">
+                <label htmlFor="forecast-deadline">RESOLUTION DATE</label>
+                <input id="forecast-deadline" type="date" value={forecastDeadline} min={new Date(Date.now() + 86400000).toISOString().slice(0, 10)} onChange={(event) => setForecastDeadline(event.target.value)} disabled={busy} />
+              </div>
+            )}
             <p className="track-line">SEE <span>•</span> HEAR <span>•</span> UNDERSTAND <span>•</span> BUILD</p>
             {notice && <p className="hero-notice" role="status"><Check size={14} /> {notice}</p>}
             {error && !authOpen && <p className="hero-error" role="alert">{error}</p>}
           </div>
         </div>
       </section>
+
+      {forecast && <ForecastPanel forecast={forecast} calibration={calibration} resolving={resolvingForecast} onResolve={handleResolveForecast} />}
 
       {world && (
         <section className="world-section" id="project-world">
@@ -367,17 +502,17 @@ function App() {
             </article>
             <article className="world-card">
               <p className="card-label">OBJECTIVE</p>
-              <h3>{world.objectives.at(-1)?.statement || '—'}</h3>
-              <span>{world.objectives.at(-1)?.status || 'active'}</span>
+              <h3>{world.objectives.at(-1)?.statement || forecast?.question || '—'}</h3>
+              <span>{world.objectives.at(-1)?.status || forecast?.status || 'active'}</span>
             </article>
             <article className="world-card">
               <p className="card-label">PORTABLE WORKER</p>
-              <h3>{world.worker_runs.at(-1)?.worker_key || 'Waiting'}</h3>
-              <span>{world.worker_runs.at(-1)?.status || 'not started'}</span>
+              <h3>{world.worker_runs.at(-1)?.worker_key || (forecast ? 'forecast_runtime' : 'Waiting')}</h3>
+              <span>{world.worker_runs.at(-1)?.status || (forecast ? 'tracking' : 'not started')}</span>
             </article>
             <article className="world-card">
               <p className="card-label">VERIFICATION</p>
-              <h3>{world.verifications.at(-1)?.passed ? 'PASS' : 'PENDING'}</h3>
+              <h3>{world.verifications.at(-1)?.passed ? 'PASS' : forecast?.status === 'resolved' ? 'RESOLVED' : 'PENDING'}</h3>
               <span>{world.verifications.at(-1)?.evidence.length ?? 0} evidence checks</span>
             </article>
             <article className="world-card">
