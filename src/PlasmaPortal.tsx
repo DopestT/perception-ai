@@ -1,12 +1,13 @@
 import { useEffect, useRef } from 'react'
 
 export type PlasmaMode = 'idle' | 'hover' | 'focused' | 'typing' | 'charging' | 'absorbing' | 'auth' | 'transitioning'
-export type ExperienceMode = 'discover' | 'perceive' | 'search'
+export type ExperienceMode = 'discover' | 'perceive' | 'search' | 'forecast'
 
 const experienceValues: Record<ExperienceMode, number> = {
   discover: 0,
   perceive: 1,
   search: 2,
+  forecast: 3,
 }
 
 export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: PlasmaMode; experienceMode: ExperienceMode; energy?: number }) {
@@ -82,8 +83,13 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
         vec3 searchB = mix(vec3(0.0, 0.62, 0.94), vec3(0.45, 0.98, 1.0), t);
         vec3 search = mix(searchA, searchB, side);
 
+        vec3 forecastA = mix(vec3(0.08, 0.42, 0.55), vec3(0.30, 0.95, 0.88), t);
+        vec3 forecastB = mix(vec3(0.95, 0.50, 0.02), vec3(1.0, 0.88, 0.28), t);
+        vec3 forecast = mix(forecastA, forecastB, side);
+
         vec3 discoverToPerceive = mix(discover, perceive, smoothstep(0.0, 1.0, experience));
-        vec3 base = mix(discoverToPerceive, search, smoothstep(1.0, 2.0, experience));
+        vec3 throughSearch = mix(discoverToPerceive, search, smoothstep(1.0, 2.0, experience));
+        vec3 base = mix(throughSearch, forecast, smoothstep(2.0, 3.0, experience));
         return mix(base, vec3(1.0), smoothstep(0.78, 1.0, t) * 0.35);
       }
 
