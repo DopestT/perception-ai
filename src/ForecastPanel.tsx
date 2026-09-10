@@ -1,5 +1,6 @@
-import { FormEvent, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, ArrowRight, ArrowUp, BarChart3, BrainCircuit, CheckCircle2, CircleDot, Link2, Scale } from 'lucide-react'
+import { ForecastAutopilotPanel } from './ForecastAutopilotPanel'
 import type { Forecast, ForecastCalibration, ForecastModelState } from './lib/perception-backend'
 import './forecast.css'
 
@@ -46,6 +47,7 @@ export function ForecastPanel({
   onRunIntelligence: () => void
 }) {
   const [ticker, setTicker] = useState('')
+  const autoStarted = useRef(new Set<string>())
   const evidenceCount = forecast.supporting_evidence.length + forecast.contradicting_evidence.length + forecast.watch_signals.length
   const score = forecast.brier_score
   const consensus = modelState(forecast.model_breakdown._consensus)
@@ -54,6 +56,20 @@ export function ForecastPanel({
     const state = modelState(value)
     return state?.probability != null ? [[key, state] as const] : []
   }), [forecast.model_breakdown])
+
+  useEffect(() => {
+    if (
+      forecast.status !== 'open'
+      || models.length > 0
+      || runningIntelligence
+      || attachingMarket
+      || autoStarted.current.has(forecast.id)
+    ) return
+
+    autoStarted.current.add(forecast.id)
+    const timer = window.setTimeout(() => onRunIntelligence(), 180)
+    return () => window.clearTimeout(timer)
+  }, [attachingMarket, forecast.id, forecast.status, models.length, onRunIntelligence, runningIntelligence])
 
   const submitTicker = (event: FormEvent) => {
     event.preventDefault()
@@ -124,8 +140,8 @@ export function ForecastPanel({
         <div className="forecast-auto-run">
           <div>
             <p className="card-label"><BrainCircuit size={14} /> AUTONOMOUS INTELLIGENCE</p>
-            <h3>Find the signals for me.</h3>
-            <p>Perception searches for matching prediction markets, recent public evidence, and usable internal base rates, then recalculates consensus while recording its abstentions.</p>
+            <h3>{runningIntelligence ? 'Scouting automatically…' : 'Find the signals for me.'}</h3>
+            <p>New forecasts start intelligence automatically. You can rerun it manually at any time to force a fresh market, evidence, and base-rate scan.</p>
           </div>
           <button type="button" onClick={onRunIntelligence} disabled={runningIntelligence || attachingMarket}>
             <BrainCircuit size={16} /> {runningIntelligence ? 'SCOUTING…' : 'RUN INTELLIGENCE'}
@@ -194,6 +210,8 @@ export function ForecastPanel({
           </article>
         </div>
       )}
+
+      <ForecastAutopilotPanel forecast={forecast} resolving={resolving} onResolve={onResolve} />
 
       {forecast.status === 'open' ? (
         <div className="forecast-resolution">
