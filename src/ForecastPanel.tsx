@@ -43,10 +43,11 @@ export function ForecastPanel({
   const evidenceCount = forecast.supporting_evidence.length + forecast.contradicting_evidence.length + forecast.watch_signals.length
   const score = forecast.brier_score
   const consensus = modelState(forecast.model_breakdown._consensus)
-  const models = useMemo(() => Object.entries(forecast.model_breakdown)
-    .filter(([key]) => key !== '_consensus')
-    .map(([key, value]) => [key, modelState(value)] as const)
-    .filter((entry): entry is readonly [string, ForecastModelState] => Boolean(entry[1]?.probability != null)), [forecast.model_breakdown])
+  const models = useMemo(() => Object.entries(forecast.model_breakdown).flatMap(([key, value]) => {
+    if (key === '_consensus') return []
+    const state = modelState(value)
+    return state?.probability != null ? [[key, state] as const] : []
+  }), [forecast.model_breakdown])
 
   const submitTicker = (event: FormEvent) => {
     event.preventDefault()
@@ -96,7 +97,7 @@ export function ForecastPanel({
 
         <article className="forecast-card">
           <p className="card-label">ENSEMBLE</p>
-          <h3>{consensus?.model_count ?? models.length || 'PRIOR'}</h3>
+          <h3>{consensus?.model_count ?? (models.length || 'PRIOR')}</h3>
           <span>{consensus?.model_count ? `independent model keys · disagreement ${pct(consensus.disagreement ?? 0)}` : 'waiting for independent signals'}</span>
         </article>
 
