@@ -9,7 +9,7 @@ export const HAGERSTOWN_WATERPROOFING_CANDIDATE: MarketCandidate = {
   country: 'US',
   primaryService: WATERPROOFING_VERTICAL.primaryService,
   secondaryServices: [...WATERPROOFING_VERTICAL.secondaryServices],
-  stage: 'RESEARCH',
+  stage: 'READY_TO_BUILD',
   createdAt: new Date(0).toISOString(),
 };
 
@@ -29,7 +29,7 @@ export const HAGERSTOWN_WATERPROOFING_SPEC: MicrositeSpec = {
     'Williamsport, MD',
   ],
   claimsApproved: false,
-  domainPurchaseApproved: false,
+  domainPurchaseApproved: true,
   deploymentApproved: false,
 };
 
