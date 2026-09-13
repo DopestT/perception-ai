@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   chooseBestOwnedDomain,
+  rankUsesForDomain,
   scoreDomainOpportunityFit,
   shouldReuseOwnedDomain,
   type OwnedDomain,
@@ -9,33 +10,38 @@ import {
 describe('owned domain inventory', () => {
   const parked: OwnedDomain = { id: 'd1', domain: 'example.com', status: 'PARKED' };
 
-  it('reuses a parked domain only when the fit is strong and low-risk', () => {
-    const fit = scoreDomainOpportunityFit({
-      domainId: 'd1',
-      opportunityId: 'o1',
-      topicalFit: 95,
+  const fit = (domainId: string, opportunityId: string, economicPotential = 90) =>
+    scoreDomainOpportunityFit({
+      domainId,
+      opportunityId,
+      topicalFit: 90,
       brandFit: 85,
       audienceFit: 80,
+      economicPotential,
+      executionFeasibility: 85,
+      timeToValue: 75,
       trustRisk: 10,
-      rationale: 'Direct topical and audience match',
+      rationale: 'Strong legitimate use with practical path to value',
     });
-    expect(fit.score).toBeGreaterThanOrEqual(70);
-    expect(shouldReuseOwnedDomain(parked, fit)).toBe(true);
+
+  it('reuses a parked domain only when the fit is strong and low-risk', () => {
+    const scored = fit('d1', 'o1');
+    expect(scored.score).toBeGreaterThanOrEqual(70);
+    expect(shouldReuseOwnedDomain(parked, scored)).toBe(true);
   });
 
   it('never reassigns an active domain', () => {
-    const fit = scoreDomainOpportunityFit({
-      domainId: 'd2', opportunityId: 'o1', topicalFit: 100, brandFit: 100, audienceFit: 100, trustRisk: 0, rationale: 'Strong fit',
-    });
-    expect(shouldReuseOwnedDomain({ id: 'd2', domain: 'active.com', status: 'ACTIVE' }, fit)).toBe(false);
+    expect(shouldReuseOwnedDomain({ id: 'd2', domain: 'active.com', status: 'ACTIVE' }, fit('d2', 'o1'))).toBe(false);
   });
 
   it('chooses the best eligible owned domain', () => {
     const domains: OwnedDomain[] = [parked, { id: 'd2', domain: 'other.com', status: 'PARKED' }];
-    const fits = [
-      scoreDomainOpportunityFit({ domainId: 'd1', opportunityId: 'o1', topicalFit: 90, brandFit: 80, audienceFit: 80, trustRisk: 10, rationale: 'Good fit' }),
-      scoreDomainOpportunityFit({ domainId: 'd2', opportunityId: 'o1', topicalFit: 75, brandFit: 70, audienceFit: 70, trustRisk: 10, rationale: 'Weaker fit' }),
-    ];
+    const fits = [fit('d1', 'o1', 95), fit('d2', 'o1', 70)];
     expect(chooseBestOwnedDomain(domains, fits)?.domain.domain).toBe('example.com');
+  });
+
+  it('ranks competing uses for the same domain by expected value score', () => {
+    const uses = [fit('d1', 'media', 55), fit('d1', 'lead-gen', 95), fit('d1', 'affiliate', 75)];
+    expect(rankUsesForDomain(parked, uses).map((item) => item.opportunityId)).toEqual(['lead-gen', 'affiliate', 'media']);
   });
 });
