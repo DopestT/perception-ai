@@ -4,6 +4,16 @@ The Microsite Engine is a Perception capability for identifying local-service op
 
 Perception remains the source of truth. Microsites are outputs of the runtime.
 
+## Portfolio target
+
+V1 is designed around a 100-site portfolio. The number 100 is a capacity target, not permission to publish 100 weak sites. Perception creates 100 portfolio slots, researches opportunities continuously, and only promotes a slot when the market evidence clears the build threshold.
+
+A slot progresses through:
+
+`RESEARCHING -> CANDIDATE -> VALIDATED -> APPROVAL_REQUIRED -> BUILDING -> LIVE -> MONETIZING`
+
+Unvalidated slots stay in research. Domain purchases and paid services remain gated.
+
 ## Runtime mapping
 
 - EXPRESS: define portfolio objective and constraints
@@ -22,6 +32,8 @@ Perception remains the source of truth. Microsites are outputs of the runtime.
 ## Public-site isolation
 
 Each public microsite can have its own domain, branding, deployment, and analytics path. The public sites do not need to link to one another or expose the private portfolio control plane.
+
+The private control plane can still aggregate rank, lead, uptime, and revenue events across the portfolio.
 
 The engine must not invent reviews, addresses, licenses, certifications, contractor identities, business history, or customer claims.
 
@@ -43,9 +55,14 @@ Waterproofing and moisture-control services:
 
 Initial geography: Mid-Atlantic. Seed markets are research candidates only until evidence is collected and scored.
 
+## Opportunity scoring
+
+Each service + market candidate is scored from 0-100 using commercial intent, competition advantage, local demand, estimated lead value, domain fit, and evidence confidence. A candidate must score at least 65 and have MEDIUM or HIGH evidence confidence before Perception can place it into a validated portfolio slot.
+
 ## Core entities
 
 - MicrositePortfolio
+- MicrositePortfolioSlot
 - MarketCandidate
 - OpportunityScore
 - MicrositeSpec
@@ -53,5 +70,9 @@ Initial geography: Mid-Atlantic. Seed markets are research candidates only until
 - LeadEvent
 - RevenueEvent
 - VerificationRecord
+
+## Persistence
+
+Migration `013_microsite_portfolio.sql` creates persistent portfolios, 100 numbered slots by default, market candidates, microsites, lead events, and revenue events. Client access is read-only under RLS; bounded security-definer runtime functions own mutations.
 
 The core model is provider-neutral. Hosting, database, rank-tracking, call-tracking, and telephony adapters attach through Perception capability routing rather than being hard-coded into the model.
