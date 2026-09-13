@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, ArrowRight, ArrowUp, BarChart3, BrainCircuit, CheckCircle2, CircleDot, Link2, Scale } from 'lucide-react'
 import { ForecastAutopilotPanel } from './ForecastAutopilotPanel'
 import { ForecastSelfCalibrationPanel } from './ForecastSelfCalibrationPanel'
+import { ForecastScenarioPanel } from './ForecastScenarioPanel'
 import type { Forecast, ForecastCalibration, ForecastModelState } from './lib/perception-backend'
 import './forecast.css'
 
@@ -212,6 +213,7 @@ export function ForecastPanel({
         </div>
       )}
 
+      <ForecastScenarioPanel forecast={forecast} />
       <ForecastAutopilotPanel forecast={forecast} resolving={resolving} onResolve={onResolve} />
       <ForecastSelfCalibrationPanel forecast={forecast} />
 
