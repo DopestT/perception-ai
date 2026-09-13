@@ -1,0 +1,8 @@
+{
+  "name": "hagerstown-basement-waterproofing",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node generate.mjs"
+  }
+}
