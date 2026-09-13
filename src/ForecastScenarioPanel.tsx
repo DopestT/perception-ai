@@ -74,21 +74,23 @@ export function ForecastScenarioPanel({ forecast }: { forecast: Forecast }) {
 
     setLoading(true)
     setError('')
-    client
-      .rpc('perception_refresh_forecast_scenario_analysis', { p_forecast_id: forecast.id })
-      .then(({ data, error: rpcError }) => {
+
+    void (async () => {
+      try {
+        const { data, error: rpcError } = await client.rpc('perception_refresh_forecast_scenario_analysis', {
+          p_forecast_id: forecast.id,
+        })
         if (!active) return
         if (rpcError) throw rpcError
         if (!data) throw new Error('Scenario intelligence returned no result.')
         setAnalysis(data as ForecastScenarioAnalysis)
-      })
-      .catch((cause) => {
+      } catch (cause: unknown) {
         if (!active) return
         setError(cause instanceof Error ? cause.message : 'Scenario intelligence is unavailable.')
-      })
-      .finally(() => {
+      } finally {
         if (active) setLoading(false)
-      })
+      }
+    })()
 
     return () => { active = false }
   }, [forecast.id, forecast.updated_at])
