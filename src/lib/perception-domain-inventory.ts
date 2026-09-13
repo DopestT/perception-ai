@@ -25,6 +25,11 @@ export interface DomainOpportunityFit {
 
 const clamp = (value: number) => Math.max(0, Math.min(100, value));
 
+/**
+ * Value-first scoring for an owned domain. A use wins only when it combines
+ * a credible topical/brand fit with a realistic path to value. High-value
+ * ideas that create trust problems are explicitly penalized.
+ */
 export function scoreDomainOpportunityFit(input: Omit<DomainOpportunityFit, 'score'>): DomainOpportunityFit {
   const topical = clamp(input.topicalFit);
   const brand = clamp(input.brandFit);
