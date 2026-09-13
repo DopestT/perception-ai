@@ -1,0 +1,10 @@
+create index if not exists perception_microsite_candidates_user_idx on public.perception_microsite_candidates(user_id);
+create index if not exists perception_microsite_leads_user_idx on public.perception_microsite_leads(user_id);
+create index if not exists perception_microsite_portfolios_project_idx on public.perception_microsite_portfolios(project_id);
+create index if not exists perception_microsite_revenue_lead_idx on public.perception_microsite_revenue(lead_id);
+create index if not exists perception_microsite_revenue_user_idx on public.perception_microsite_revenue(user_id);
+create index if not exists perception_microsite_slots_candidate_idx on public.perception_microsite_slots(market_candidate_id);
+create index if not exists perception_microsite_slots_site_idx on public.perception_microsite_slots(microsite_id);
+create index if not exists perception_microsite_slots_user_idx on public.perception_microsite_slots(user_id);
+create index if not exists perception_microsites_candidate_idx on public.perception_microsites(candidate_id);
+create index if not exists perception_microsites_user_idx on public.perception_microsites(user_id);
