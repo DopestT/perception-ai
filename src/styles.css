@@ -220,6 +220,36 @@ button:disabled { cursor: default; }
   outline-offset: 2px;
 }
 .experience-tab:disabled { cursor: default; opacity: .5; }
+.capability-launcher {
+  display: flex;
+  justify-content: center;
+  min-height: 25px;
+  margin: -8px 0 10px;
+}
+.capability-link {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  color: rgba(239,238,230,.3);
+  background: transparent;
+  font-size: 7px;
+  font-weight: 760;
+  letter-spacing: .14em;
+  transition: color .2s ease, background-color .2s ease;
+}
+.capability-link:hover:not(:disabled) {
+  color: rgba(255,255,255,.64);
+  background: rgba(255,255,255,.025);
+}
+.capability-link--active {
+  color: rgba(var(--mode-accent-rgb), .82);
+  background: rgba(var(--mode-accent-rgb), .045);
+}
+.capability-link:disabled { opacity: .45; cursor: default; }
 .hero-input-shell {
   position: relative;
   width: min(100%, 720px);
