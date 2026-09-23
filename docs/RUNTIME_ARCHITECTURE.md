@@ -1,3 +1,5 @@
+> **Canonical update — 2026-09-23:** Runtime Architecture v0.2 supersedes this v0.1 document. The canonical v0.2 specification is in [RUNTIME_ARCHITECTURE_V0_2.md](./RUNTIME_ARCHITECTURE_V0_2.md). v0.2 preserves the single-orchestrator model and adds first-class Epistemic and Execution Ledgers so claims and external effects remain provenance-aware, temporal, append-oriented, and verification-gated.
+
 # Perception Runtime Architecture v0.1
 
 ## Core operating principle
