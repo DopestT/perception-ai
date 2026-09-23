@@ -1,6 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { governTask } from '../_shared/token-efficiency.ts'
 import { resolveObjectiveMeaning } from '../_shared/meaning-resolver.ts'
+import { planInitialRealityRoute } from '../_shared/reality-planner.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -68,19 +69,39 @@ Deno.serve(async (req: Request) => {
       model: Deno.env.get('PERCEPTION_MEANING_MODEL'),
     })
 
+    const routePlan = planInitialRealityRoute({
+      desiredReality: meaning.desired_reality,
+      currentReality: meaning.current_reality,
+      constraints: meaning.constraints,
+      successCriteria: meaning.success_criteria,
+      deliverables: meaning.deliverables,
+      knownUnknowns: meaning.known_unknowns,
+    })
+
     let runtimeData: unknown
     let runtimeError: { code?: string; message?: string } | null = null
 
-    const resolvedCall = await admin.rpc('perception_submit_resolved_objective_internal', {
+    const plannedCall = await admin.rpc('perception_submit_planned_objective_internal', {
       p_user_id: userData.user.id,
       p_statement: statement,
       p_semantics: meaning,
+      p_plan: routePlan,
     })
 
-    runtimeData = resolvedCall.data
-    runtimeError = resolvedCall.error
+    runtimeData = plannedCall.data
+    runtimeError = plannedCall.error
 
-    // Keep previews and rollback-safe deployments functional until migration 022 is applied.
+    // Roll back one runtime generation at a time so previews remain functional before migrations land.
+    if (runtimeError?.code === 'PGRST202' || runtimeError?.code === '42883') {
+      const resolvedCall = await admin.rpc('perception_submit_resolved_objective_internal', {
+        p_user_id: userData.user.id,
+        p_statement: statement,
+        p_semantics: meaning,
+      })
+      runtimeData = resolvedCall.data
+      runtimeError = resolvedCall.error
+    }
+
     if (runtimeError?.code === 'PGRST202' || runtimeError?.code === '42883') {
       const fallbackCall = await admin.rpc('perception_submit_objective_internal', {
         p_user_id: userData.user.id,
@@ -133,6 +154,7 @@ Deno.serve(async (req: Request) => {
     return json({
       ...runtimeResult,
       meaning,
+      route_plan: routePlan,
       token_control: {
         enabled: costControlEnabled,
         budget_tier: costControlEnabled ? tokenDecision.tier : 'max',
