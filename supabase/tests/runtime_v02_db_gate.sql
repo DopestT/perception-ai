@@ -12,7 +12,7 @@ create or replace function public.runtime_v02_expect_worker_denied(
 )
 returns void
 language plpgsql
-as $
+as $fn$
 begin
   begin
     insert into public.perception_worker_runs(
@@ -25,7 +25,7 @@ begin
     when insufficient_privilege then return;
   end;
 end
-$;
+$fn$;
 
 insert into auth.users(id, email)
 values
