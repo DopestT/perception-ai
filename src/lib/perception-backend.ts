@@ -397,3 +397,72 @@ export async function getLatestProjectWorld(): Promise<ProjectWorld | null> {
   if (error) throw error
   return data?.id ? getProjectWorld(data.id) : null
 }
+
+
+export const PERCEPTION_STORAGE_BUCKET = 'perception-artifacts'
+
+function safeStorageFilename(name: string): string {
+  const normalized = name
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '')
+
+  return normalized || 'artifact'
+}
+
+export type StoredArtifact = {
+  bucket: typeof PERCEPTION_STORAGE_BUCKET
+  path: string
+  contentType: string | null
+  size: number
+}
+
+export async function uploadProjectArtifact(projectId: string, file: File): Promise<StoredArtifact> {
+  const client = requireBackend()
+  const { data: authData, error: authError } = await client.auth.getUser()
+  if (authError) throw authError
+  if (!authData.user) throw new Error('Sign in before uploading files.')
+
+  const safeName = safeStorageFilename(file.name)
+  const objectPath = `${authData.user.id}/${projectId}/${crypto.randomUUID()}-${safeName}`
+
+  const { error } = await client.storage
+    .from(PERCEPTION_STORAGE_BUCKET)
+    .upload(objectPath, file, {
+      cacheControl: '3600',
+      contentType: file.type || undefined,
+      upsert: false,
+    })
+
+  if (error) throw error
+
+  return {
+    bucket: PERCEPTION_STORAGE_BUCKET,
+    path: objectPath,
+    contentType: file.type || null,
+    size: file.size,
+  }
+}
+
+export async function createProjectArtifactSignedUrl(
+  objectPath: string,
+  expiresInSeconds = 3600,
+): Promise<string> {
+  const client = requireBackend()
+  const { data, error } = await client.storage
+    .from(PERCEPTION_STORAGE_BUCKET)
+    .createSignedUrl(objectPath, expiresInSeconds)
+
+  if (error) throw error
+  return data.signedUrl
+}
+
+export async function removeProjectArtifact(objectPath: string): Promise<void> {
+  const client = requireBackend()
+  const { error } = await client.storage
+    .from(PERCEPTION_STORAGE_BUCKET)
+    .remove([objectPath])
+
+  if (error) throw error
+}
