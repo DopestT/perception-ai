@@ -1,0 +1,82 @@
+name: Runtime v0.2 DB Gate
+
+on:
+  pull_request:
+    paths:
+      - "supabase/migrations/**"
+      - "supabase/tests/**"
+      - ".github/workflows/runtime-v02-db-gate.yml"
+  workflow_dispatch:
+
+jobs:
+  runtime-v02-db-gate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Bootstrap Supabase-compatible auth and API roles
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          create role anon nologin;
+          create role authenticated nologin;
+          create role service_role nologin;
+
+          create schema auth;
+          create table auth.users (
+            id uuid primary key,
+            email text,
+            created_at timestamptz not null default now()
+          );
+
+          create or replace function auth.uid()
+          returns uuid
+          language sql
+          stable
+          as $$
+            select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
+          $$;
+
+          grant usage on schema auth to anon, authenticated, service_role;
+          grant execute on function auth.uid() to anon, authenticated, service_role;
+          SQL
+
+      - name: Replay runtime foundation and v0.2 migrations
+        run: |
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/001_perception_memory.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/002_perception_runtime.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/003_perception_verified_vertical_slice.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/004_perception_runtime_api_hardening.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/005_perception_worker_artifact_index.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/021_runtime_v02_ledgers.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/022_runtime_v02_operational_wiring.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/023_runtime_v02_continuation_route.sql
+
+      - name: Run Runtime v0.2 security and truth assertions
+        run: |
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/runtime_v02_db_gate.sql
