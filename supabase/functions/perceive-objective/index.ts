@@ -1,5 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { governTask } from '../_shared/token-efficiency.ts'
+import { resolveObjectiveMeaning } from '../_shared/meaning-resolver.ts'
+import { planInitialRealityRoute } from '../_shared/reality-planner.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -62,15 +64,62 @@ Deno.serve(async (req: Request) => {
     const tokenDecision = governTask({ statement, capability: 'reason', risk: 'low' })
     const costControlEnabled = policy?.enabled ?? true
 
-    const { data, error } = await admin.rpc('perception_submit_objective_internal', {
-      p_user_id: userData.user.id,
-      p_statement: statement,
+    const meaning = await resolveObjectiveMeaning(statement, {
+      apiKey: Deno.env.get('OPENAI_API_KEY'),
+      model: Deno.env.get('PERCEPTION_MEANING_MODEL'),
     })
 
-    if (error) {
-      console.error('Perception objective runtime failed', { code: error.code, message: error.message })
+    const routePlan = planInitialRealityRoute({
+      desiredReality: meaning.desired_reality,
+      currentReality: meaning.current_reality,
+      constraints: meaning.constraints,
+      successCriteria: meaning.success_criteria,
+      deliverables: meaning.deliverables,
+      knownUnknowns: meaning.known_unknowns,
+    })
+
+    let runtimeData: unknown
+    let runtimeError: { code?: string; message?: string } | null = null
+
+    const plannedCall = await admin.rpc('perception_submit_planned_objective_internal', {
+      p_user_id: userData.user.id,
+      p_statement: statement,
+      p_semantics: meaning,
+      p_plan: routePlan,
+    })
+
+    runtimeData = plannedCall.data
+    runtimeError = plannedCall.error
+
+    // Roll back one runtime generation at a time so previews remain functional before migrations land.
+    if (runtimeError?.code === 'PGRST202' || runtimeError?.code === '42883') {
+      const resolvedCall = await admin.rpc('perception_submit_resolved_objective_internal', {
+        p_user_id: userData.user.id,
+        p_statement: statement,
+        p_semantics: meaning,
+      })
+      runtimeData = resolvedCall.data
+      runtimeError = resolvedCall.error
+    }
+
+    if (runtimeError?.code === 'PGRST202' || runtimeError?.code === '42883') {
+      const fallbackCall = await admin.rpc('perception_submit_objective_internal', {
+        p_user_id: userData.user.id,
+        p_statement: statement,
+      })
+      runtimeData = fallbackCall.data
+      runtimeError = fallbackCall.error
+    }
+
+    if (runtimeError) {
+      console.error('Perception objective runtime failed', {
+        code: runtimeError.code,
+        message: runtimeError.message,
+      })
       return json({ error: 'Objective runtime failed' }, 500)
     }
+
+    const data = runtimeData
 
     const runtimeResult = data && typeof data === 'object' && !Array.isArray(data)
       ? data as Record<string, unknown>
@@ -104,6 +153,8 @@ Deno.serve(async (req: Request) => {
 
     return json({
       ...runtimeResult,
+      meaning,
+      route_plan: routePlan,
       token_control: {
         enabled: costControlEnabled,
         budget_tier: costControlEnabled ? tokenDecision.tier : 'max',
