@@ -177,6 +177,14 @@ export type ProjectWorld = {
     status: string
     current_reality: string
     desired_reality: string
+    constraints?: string[]
+    success_criteria?: string[]
+    deliverables?: string[]
+    known_unknowns?: string[]
+    urgency?: 'low' | 'normal' | 'high' | 'critical'
+    meaning?: Record<string, unknown>
+    meaning_source?: 'openai' | 'deterministic_fallback' | null
+    meaning_confidence?: number | null
     created_at: string
   }>
   routes: Array<{
@@ -251,6 +259,41 @@ export type ObjectiveRuntimeResult = {
   artifact_id?: string
   verification_id?: string
   stage?: string
+}
+
+export type ProjectLedgers = {
+  epistemic: Array<{
+    id: string
+    project_id: string
+    objective_id: string | null
+    claim_key: string
+    statement: string
+    state: 'observed' | 'inferred' | 'confirmed' | 'unknown' | 'rejected' | 'stale' | 'contradicted'
+    confidence: number
+    provenance: unknown[]
+    temporal_valid_from: string
+    temporal_valid_until: string | null
+    contradiction_refs: unknown[]
+    route_impact: string
+    metadata: Record<string, unknown>
+    created_at: string
+  }>
+  execution: Array<{
+    id: string
+    project_id: string
+    objective_id: string | null
+    route_id: string | null
+    route_node_id: string | null
+    worker_run_id: string | null
+    action_key: string
+    phase: 'intended' | 'authorized' | 'attempted' | 'observed' | 'verified' | 'blocked' | 'failed' | 'rolled_back'
+    permission_level: 'P0' | 'P1' | 'P2' | 'P3'
+    capability: string | null
+    target: string | null
+    details: Record<string, unknown>
+    evidence: unknown[]
+    created_at: string
+  }>
 }
 
 type ForecastRuntimeResult = {
@@ -384,6 +427,20 @@ export async function getProjectWorld(projectId: string): Promise<ProjectWorld> 
   if (error) throw error
   if (!data) throw new Error('Project World was not returned.')
   return data as ProjectWorld
+}
+
+export async function getProjectLedgers(projectId: string): Promise<ProjectLedgers | null> {
+  const client = requireBackend()
+  const { data, error } = await client.rpc('perception_get_project_ledgers', {
+    p_project_id: projectId,
+  })
+
+  if (error) {
+    if (error.code === 'PGRST202' || error.code === '42883') return null
+    throw error
+  }
+
+  return data ? data as ProjectLedgers : { epistemic: [], execution: [] }
 }
 
 export async function getLatestProjectWorld(): Promise<ProjectWorld | null> {
