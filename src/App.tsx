@@ -562,28 +562,30 @@ function App() {
             ))}
           </div>
 
-          <div className="trust-summary" aria-label="Perception trust state">
-            <div>
-              <span>KNOWN</span>
-              <strong>{ledgers?.epistemic.filter((entry) => entry.state === 'observed' || entry.state === 'confirmed').length ?? 0}</strong>
-              <small>trusted claims</small>
+          {ledgers && (
+            <div className="trust-summary" aria-label="Perception trust state">
+              <div>
+                <span>KNOWN</span>
+                <strong>{ledgers.epistemic.filter((entry) => entry.state === 'observed' || entry.state === 'confirmed').length}</strong>
+                <small>trusted claims</small>
+              </div>
+              <div>
+                <span>INFERRED</span>
+                <strong>{ledgers.epistemic.filter((entry) => entry.state === 'inferred').length}</strong>
+                <small>revisable claims</small>
+              </div>
+              <div>
+                <span>ATTEMPTED</span>
+                <strong>{ledgers.execution.filter((entry) => entry.phase === 'attempted').length}</strong>
+                <small>execution attempts</small>
+              </div>
+              <div>
+                <span>VERIFIED</span>
+                <strong>{ledgers.execution.filter((entry) => entry.phase === 'verified').length}</strong>
+                <small>verified effects</small>
+              </div>
             </div>
-            <div>
-              <span>INFERRED</span>
-              <strong>{ledgers?.epistemic.filter((entry) => entry.state === 'inferred').length ?? 0}</strong>
-              <small>revisable claims</small>
-            </div>
-            <div>
-              <span>ATTEMPTED</span>
-              <strong>{ledgers?.execution.filter((entry) => entry.phase === 'attempted').length ?? 0}</strong>
-              <small>execution attempts</small>
-            </div>
-            <div>
-              <span>VERIFIED</span>
-              <strong>{ledgers?.execution.filter((entry) => entry.phase === 'verified').length ?? 0}</strong>
-              <small>verified effects</small>
-            </div>
-          </div>
+          )}
 
           <div className="world-grid">
             <article className="world-card world-card--wide">
