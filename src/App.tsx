@@ -39,7 +39,7 @@ const targetStages = [
 ]
 
 const experienceModes: Array<{
-  id: ExperienceMode
+  id: Exclude<ExperienceMode, 'forecast'>
   label: string
   invitation: string
   placeholder: string
@@ -48,8 +48,15 @@ const experienceModes: Array<{
   { id: 'discover', label: 'DISCOVER', invitation: 'FIND THE POSSIBILITY', placeholder: "I don't know where to begin...", action: 'DISCOVER' },
   { id: 'perceive', label: 'PERCEIVE', invitation: 'THE FRONT DOOR TO IMAGINATION', placeholder: 'I have an idea...', action: 'PERCEIVE IT' },
   { id: 'search', label: 'SEARCH', invitation: 'FIND WHAT IS TRUE AND USEFUL', placeholder: "I'm looking for...", action: 'SEARCH' },
-  { id: 'forecast', label: 'FORECAST', invitation: 'MAP WHAT IS MOST LIKELY NEXT', placeholder: 'Will this happen by the resolution date?', action: 'FORECAST' },
 ]
+
+const forecastExperience = {
+  id: 'forecast' as const,
+  label: 'FORECAST',
+  invitation: 'MAP WHAT IS MOST LIKELY NEXT',
+  placeholder: 'Will this happen by the resolution date?',
+  action: 'FORECAST',
+}
 
 function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
@@ -139,7 +146,10 @@ function App() {
   const typingTimer = useRef<number | null>(null)
 
   const completedStages = useMemo(() => inferCompletedStages(world, runtimeResult), [world, runtimeResult])
-  const activeExperience = experienceModes.find((mode) => mode.id === experienceMode) ?? experienceModes[1]
+  const activeExperience =
+    experienceMode === 'forecast'
+      ? forecastExperience
+      : experienceModes.find((mode) => mode.id === experienceMode) ?? experienceModes[1]
 
   const loadLatestWorld = useCallback(async () => {
     const latest = await getLatestProjectWorld()
@@ -476,6 +486,18 @@ function App() {
                   {mode.label}
                 </button>
               ))}
+            </div>
+            <div className="capability-launcher">
+              <button
+                type="button"
+                className={experienceMode === 'forecast' ? 'capability-link capability-link--active' : 'capability-link'}
+                onClick={() => selectExperienceMode(experienceMode === 'forecast' ? 'perceive' : 'forecast')}
+                disabled={busy}
+                aria-pressed={experienceMode === 'forecast'}
+              >
+                <Clock3 size={12} />
+                <span>{experienceMode === 'forecast' ? 'FORECAST WORKSPACE · EXIT' : 'SPECIALIZED · FORECAST'}</span>
+              </button>
             </div>
             <form className="hero-input-shell" onSubmit={submit}>
               <input
