@@ -1,3 +1,5 @@
+> **Audit update — 2026-09-23:** This original 2026-09-06/07 baseline is retained as historical evidence. Since then, main has added token-efficiency controls, a substantial FORECAST subsystem, a microsite engine/operator, Vercel Analytics, and additional production-oriented schema. The latest main commit has a successful Vercel commit status, but real-user browser/mobile E2E remains unverified from this environment. Runtime v0.2 work is now restoring architectural focus around explicit Epistemic and Execution Ledgers. A product-taxonomy drift is also present: the frontend currently exposes FORECAST as a fourth top-level mode although the intended front door is DISCOVER / PERCEIVE / SEARCH; specialized forecast behavior should be routed beneath those modes rather than silently expanding the primary taxonomy.
+
 # Perception — Current Reality
 
 Evidence-backed production state after the canonical Supabase cutover on 2026-09-06/07.
