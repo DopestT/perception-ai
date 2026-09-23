@@ -222,6 +222,52 @@ export type ProjectWorld = {
     details: Record<string, unknown>
     checked_at: string
   }>
+  sources: Array<{
+    binding: {
+      user_id: string
+      project_id: string
+      source_id: string
+      relationship: 'primary' | 'supporting' | 'shared' | 'legacy' | 'unknown'
+      active: boolean
+      created_at: string
+      updated_at: string
+    }
+    source: {
+      id: string
+      user_id: string
+      source_type: string
+      provider: string
+      external_id: string
+      label: string
+      locator: string | null
+      enabled: boolean
+      sync_mode: 'manual' | 'poll' | 'webhook' | 'push'
+      trust_weight: number
+      freshness_sla_minutes: number
+      last_cursor: string | null
+      last_observed_at: string | null
+      last_synced_at: string | null
+      last_error: string | null
+      metadata: Record<string, unknown>
+      created_at: string
+      updated_at: string
+    }
+  }>
+  source_observations: Array<{
+    id: string
+    user_id: string
+    source_id: string
+    observation_kind: string
+    external_version: string | null
+    content_hash: string
+    summary: string
+    payload: Record<string, unknown>
+    source_ref: string | null
+    observed_at: string
+    ingested_at: string
+    processed_at: string | null
+    created_at: string
+  }>
   forecasts?: Forecast[]
   forecast_versions?: Array<{
     id: string
