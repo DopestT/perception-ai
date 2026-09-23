@@ -10,6 +10,7 @@ import {
   getForecastCalibration,
   getLatestForecast,
   getLatestProjectWorld,
+  getProjectLedgers,
   getProjectWorld,
   getSession,
   requestEmailSignIn,
@@ -21,6 +22,7 @@ import {
   type Forecast,
   type ForecastCalibration,
   type ObjectiveRuntimeResult,
+  type ProjectLedgers,
   type ProjectWorld,
 } from './lib/perception-backend'
 
@@ -111,6 +113,7 @@ function inferCompletedStages(world: ProjectWorld | null, runtimeResult: Objecti
 function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [world, setWorld] = useState<ProjectWorld | null>(null)
+  const [ledgers, setLedgers] = useState<ProjectLedgers | null>(null)
   const [runtimeResult, setRuntimeResult] = useState<ObjectiveRuntimeResult | null>(null)
   const [forecast, setForecast] = useState<Forecast | null>(null)
   const [calibration, setCalibration] = useState<ForecastCalibration | null>(null)
@@ -141,6 +144,7 @@ function App() {
   const loadLatestWorld = useCallback(async () => {
     const latest = await getLatestProjectWorld()
     setWorld(latest)
+    setLedgers(latest ? await getProjectLedgers(latest.project.id) : null)
   }, [])
 
   const loadForecastState = useCallback(async () => {
@@ -167,9 +171,13 @@ function App() {
       setPortalMode('absorbing')
       const result = await request
       if (!result.ok || !result.project_id) throw new Error(result.stage || 'Perception could not verify the first action.')
-      const nextWorld = await getProjectWorld(result.project_id)
+      const [nextWorld, nextLedgers] = await Promise.all([
+        getProjectWorld(result.project_id),
+        getProjectLedgers(result.project_id),
+      ])
       setRuntimeResult(result)
       setWorld(nextWorld)
+      setLedgers(nextLedgers)
       clearPendingObjective()
       setInput('')
       setPortalMode('transitioning')
@@ -213,14 +221,16 @@ function App() {
       const result = await request
       if (!result.ok || !result.project_id) throw new Error('Perception could not open this forecast.')
 
-      const [nextWorld, nextCalibration] = await Promise.all([
+      const [nextWorld, nextCalibration, nextLedgers] = await Promise.all([
         getProjectWorld(result.project_id),
         getForecastCalibration(),
+        getProjectLedgers(result.project_id),
       ])
       setRuntimeResult(null)
       setForecast(result.forecast)
       setCalibration(nextCalibration)
       setWorld(nextWorld)
+      setLedgers(nextLedgers)
       clearPendingObjective()
       setInput('')
       setPortalMode('transitioning')
@@ -391,6 +401,7 @@ function App() {
       await signOut()
       setSession(null)
       setWorld(null)
+      setLedgers(null)
       setRuntimeResult(null)
       setForecast(null)
       setCalibration(null)
@@ -529,6 +540,29 @@ function App() {
             ))}
           </div>
 
+          <div className="trust-summary" aria-label="Perception trust state">
+            <div>
+              <span>KNOWN</span>
+              <strong>{ledgers?.epistemic.filter((entry) => entry.state === 'observed' || entry.state === 'confirmed').length ?? 0}</strong>
+              <small>trusted claims</small>
+            </div>
+            <div>
+              <span>INFERRED</span>
+              <strong>{ledgers?.epistemic.filter((entry) => entry.state === 'inferred').length ?? 0}</strong>
+              <small>revisable claims</small>
+            </div>
+            <div>
+              <span>ATTEMPTED</span>
+              <strong>{ledgers?.execution.filter((entry) => entry.phase === 'attempted').length ?? 0}</strong>
+              <small>execution attempts</small>
+            </div>
+            <div>
+              <span>VERIFIED</span>
+              <strong>{ledgers?.execution.filter((entry) => entry.phase === 'verified').length ?? 0}</strong>
+              <small>verified effects</small>
+            </div>
+          </div>
+
           <div className="world-grid">
             <article className="world-card world-card--wide">
               <p className="card-label">CURRENT REALITY</p>
@@ -538,7 +572,11 @@ function App() {
             <article className="world-card">
               <p className="card-label">OBJECTIVE</p>
               <h3>{world.objectives.at(-1)?.statement || forecast?.question || '—'}</h3>
-              <span>{world.objectives.at(-1)?.status || forecast?.status || 'active'}</span>
+              <span>
+                {world.objectives.at(-1)?.meaning_source
+                  ? `${world.objectives.at(-1)?.status || 'active'} · meaning ${world.objectives.at(-1)?.meaning_source} ${Math.round((world.objectives.at(-1)?.meaning_confidence ?? 0) * 100)}%`
+                  : world.objectives.at(-1)?.status || forecast?.status || 'active'}
+              </span>
             </article>
             <article className="world-card">
               <p className="card-label">PORTABLE WORKER</p>
@@ -556,6 +594,46 @@ function App() {
               <span>append-oriented Project World history</span>
             </article>
           </div>
+
+          {ledgers && (ledgers.epistemic.length > 0 || ledgers.execution.length > 0) && (
+            <div className="ledger-panel">
+              <article>
+                <div className="ledger-heading">
+                  <p className="card-label">EPISTEMIC LEDGER</p>
+                  <span>{ledgers.epistemic.length} claims</span>
+                </div>
+                <div className="ledger-list">
+                  {ledgers.epistemic.slice(-5).reverse().map((entry) => (
+                    <div className="ledger-row" key={entry.id}>
+                      <span className={`ledger-state ledger-state--${entry.state}`}>{entry.state}</span>
+                      <div>
+                        <strong>{entry.statement}</strong>
+                        <small>{Math.round(entry.confidence * 100)}% confidence · {entry.claim_key}</small>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article>
+                <div className="ledger-heading">
+                  <p className="card-label">EXECUTION LEDGER</p>
+                  <span>{ledgers.execution.length} effects</span>
+                </div>
+                <div className="ledger-list">
+                  {ledgers.execution.slice(-7).reverse().map((entry) => (
+                    <div className="ledger-row" key={entry.id}>
+                      <span className={`ledger-state ledger-state--${entry.phase}`}>{entry.phase}</span>
+                      <div>
+                        <strong>{entry.capability || 'runtime'} · {entry.permission_level}</strong>
+                        <small>{entry.action_key}</small>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </div>
+          )}
         </section>
       )}
 
