@@ -1,4 +1,29 @@
-import type { CapabilityKind, PermissionLevel, RouteNodeStatus } from './perception-runtime'
+export type CapabilityKind =
+  | 'reason'
+  | 'research'
+  | 'retrieve'
+  | 'generate'
+  | 'edit'
+  | 'code'
+  | 'communicate'
+  | 'schedule'
+  | 'calculate'
+  | 'verify'
+
+export type PermissionLevel = 'P0' | 'P1' | 'P2' | 'P3'
+
+export type RouteNodeStatus =
+  | 'pending'
+  | 'ready'
+  | 'running'
+  | 'awaiting_approval'
+  | 'verifying'
+  | 'completed'
+  | 'blocked'
+  | 'failed'
+  | 'skipped'
+  | 'superseded'
+  | 'paused'
 
 export type PlannerMeaning = {
   desiredReality: string
