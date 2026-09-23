@@ -2,6 +2,31 @@
 \set user1 '11111111-1111-4111-8111-111111111111'
 \set user2 '22222222-2222-4222-8222-222222222222'
 
+create or replace function public.runtime_v02_expect_worker_denied(
+  p_user_id uuid,
+  p_project_id uuid,
+  p_route_node_id uuid,
+  p_worker_key text,
+  p_capability text,
+  p_permission_level text
+)
+returns void
+language plpgsql
+as $
+begin
+  begin
+    insert into public.perception_worker_runs(
+      user_id, project_id, route_node_id, worker_key, capability, permission_level, status
+    ) values (
+      p_user_id, p_project_id, p_route_node_id, p_worker_key, p_capability, p_permission_level, 'queued'
+    );
+    raise exception 'Worker % was inserted without a sufficient active grant', p_worker_key;
+  exception
+    when insufficient_privilege then return;
+  end;
+end
+$;
+
 insert into auth.users(id, email)
 values
   (:'user1'::uuid, 'runtime-v02-user1@example.test'),
@@ -119,26 +144,10 @@ insert into public.perception_route_nodes(
 returning id as p2_node_id
 \gset
 
-do $$
-begin
-  begin
-    insert into public.perception_worker_runs(
-      user_id, project_id, route_node_id, worker_key, capability, permission_level, status
-    ) values (
-      '11111111-1111-4111-8111-111111111111'::uuid,
-      :'project_id'::uuid,
-      :'p2_node_id'::uuid,
-      'p2_denied_no_grant',
-      'code',
-      'P2',
-      'queued'
-    );
-    raise exception 'P2 worker was inserted without a grant';
-  exception
-    when insufficient_privilege then null;
-  end;
-end
-$$;
+select public.runtime_v02_expect_worker_denied(
+  :'user1'::uuid, :'project_id'::uuid, :'p2_node_id'::uuid,
+  'p2_denied_no_grant', 'code', 'P2'
+);
 
 select (count(*) = 0) as no_unauthorized_p2_worker
 from public.perception_worker_runs
@@ -217,26 +226,10 @@ update public.perception_permission_grants
 set revoked_at = now()
 where id = :'p2_grant_id'::uuid;
 
-do $$
-begin
-  begin
-    insert into public.perception_worker_runs(
-      user_id, project_id, route_node_id, worker_key, capability, permission_level, status
-    ) values (
-      '11111111-1111-4111-8111-111111111111'::uuid,
-      :'project_id'::uuid,
-      :'p2_node_id'::uuid,
-      'p2_denied_after_revoke',
-      'code',
-      'P2',
-      'queued'
-    );
-    raise exception 'P2 worker was inserted after grant revocation';
-  exception
-    when insufficient_privilege then null;
-  end;
-end
-$$;
+select public.runtime_v02_expect_worker_denied(
+  :'user1'::uuid, :'project_id'::uuid, :'p2_node_id'::uuid,
+  'p2_denied_after_revoke', 'code', 'P2'
+);
 
 insert into public.perception_route_nodes(
   user_id, project_id, route_id, label, outcome, status, capability,
@@ -258,26 +251,10 @@ insert into public.perception_permission_grants(
 returning id as insufficient_grant_id
 \gset
 
-do $$
-begin
-  begin
-    insert into public.perception_worker_runs(
-      user_id, project_id, route_node_id, worker_key, capability, permission_level, status
-    ) values (
-      '11111111-1111-4111-8111-111111111111'::uuid,
-      :'project_id'::uuid,
-      :'p3_node_id'::uuid,
-      'p3_denied_by_p2_grant',
-      'code',
-      'P3',
-      'queued'
-    );
-    raise exception 'P3 worker was authorized by only a P2 grant';
-  exception
-    when insufficient_privilege then null;
-  end;
-end
-$$;
+select public.runtime_v02_expect_worker_denied(
+  :'user1'::uuid, :'project_id'::uuid, :'p3_node_id'::uuid,
+  'p3_denied_by_p2_grant', 'code', 'P3'
+);
 
 insert into public.perception_permission_grants(
   user_id, project_id, permission_level, capability, scope_note, expires_at
@@ -311,26 +288,10 @@ update public.perception_permission_grants
 set expires_at = now() - interval '1 second'
 where id = :'p3_grant_id'::uuid;
 
-do $$
-begin
-  begin
-    insert into public.perception_worker_runs(
-      user_id, project_id, route_node_id, worker_key, capability, permission_level, status
-    ) values (
-      '11111111-1111-4111-8111-111111111111'::uuid,
-      :'project_id'::uuid,
-      :'p3_node_id'::uuid,
-      'p3_denied_after_expiry',
-      'code',
-      'P3',
-      'queued'
-    );
-    raise exception 'P3 worker was inserted after grant expiry';
-  exception
-    when insufficient_privilege then null;
-  end;
-end
-$$;
+select public.runtime_v02_expect_worker_denied(
+  :'user1'::uuid, :'project_id'::uuid, :'p3_node_id'::uuid,
+  'p3_denied_after_expiry', 'code', 'P3'
+);
 
 select public.perception_submit_planned_objective_internal(
   :'user1'::uuid,
