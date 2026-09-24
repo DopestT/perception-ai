@@ -23,6 +23,11 @@ type TokenDecision = {
   max_output_tokens: number
   estimated_input_tokens: number
   reasons: string[]
+  selected_provider?: 'local' | 'openai' | 'openai_compatible' | null
+  selected_model?: string | null
+  routing_strategy?: string | null
+  budget_pressure?: number | string
+  route_attempts?: Array<{ provider: string; model: string; ok: boolean; reason?: string }>
   created_at: string
 }
 
@@ -39,6 +44,7 @@ type TokenDashboard = {
   latest_decision: TokenDecision | null
   top_consumers: Array<{
     capability: string
+    provider?: string
     model: string
     requests: number
     tokens: number | string
@@ -212,6 +218,9 @@ export function TokenEfficiencyPanel() {
                   <span>{decision.model_lane.toUpperCase()}</span>
                 </div>
                 <p>{compactNumber(decision.max_context_tokens)} context · {compactNumber(decision.max_output_tokens)} output max</p>
+                {decision.selected_model ? (
+                  <p>{decision.selected_provider ?? 'model'} · {decision.selected_model}{numberValue(decision.budget_pressure) >= 0.8 ? ' · budget pressure active' : ''}</p>
+                ) : null}
               </>
             ) : (
               <p>No governed request recorded yet.</p>
