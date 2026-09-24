@@ -1,5 +1,7 @@
 export type TokenBudgetTier = 'tiny' | 'normal' | 'deep' | 'max'
 export type ModelLane = 'economy' | 'balanced' | 'deep'
+export type ModelProvider = 'local' | 'openai' | 'openai_compatible'
+export type ModelProtocol = 'responses' | 'chat_completions'
 
 export type TokenDecision = {
   tier: TokenBudgetTier
@@ -7,6 +9,31 @@ export type TokenDecision = {
   maxContextTokens: number
   maxOutputTokens: number
   estimatedInputTokens: number
+  reasons: string[]
+}
+
+export type ModelPrice = {
+  inputUsdPerMillion: number
+  cachedInputUsdPerMillion: number
+  outputUsdPerMillion: number
+}
+
+export type ModelTarget = {
+  id: string
+  provider: ModelProvider
+  model: string
+  lane: ModelLane
+  protocol?: ModelProtocol
+  enabled?: boolean
+  baseUrl?: string
+  apiKey?: string
+  price?: ModelPrice
+}
+
+export type ModelRoute = {
+  preferredLane: ModelLane
+  candidates: ModelTarget[]
+  hardBudgetStop: boolean
   reasons: string[]
 }
 
@@ -18,6 +45,8 @@ const budgets: Record<TokenBudgetTier, Omit<TokenDecision, 'tier' | 'estimatedIn
 }
 
 const ranks: TokenBudgetTier[] = ['tiny', 'normal', 'deep', 'max']
+const laneRank: Record<ModelLane, number> = { economy: 0, balanced: 1, deep: 2 }
+const rankLane: ModelLane[] = ['economy', 'balanced', 'deep']
 
 function estimateTokens(text: string) {
   const value = text.trim()
@@ -65,4 +94,89 @@ export function governTask(input: {
   if (!reasons.length) reasons.push('routine task fits the smallest safe budget')
 
   return { tier, ...budgets[tier], estimatedInputTokens, reasons }
+}
+
+function uniqueTargets(targets: ModelTarget[]): ModelTarget[] {
+  const seen = new Set<string>()
+  return targets.filter((target) => {
+    if (target.enabled === false || !target.model.trim()) return false
+    const key = `${target.provider}:${target.baseUrl ?? ''}:${target.model}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+export function routeModelTargets(
+  decision: TokenDecision,
+  targets: ModelTarget[],
+  options: {
+    risk?: 'low' | 'medium' | 'high'
+    mechanicallyVerifiable?: boolean
+    costControlEnabled?: boolean
+    budgetPressure?: number
+    verificationFailures?: number
+  } = {},
+): ModelRoute {
+  const risk = options.risk ?? 'low'
+  const mechanicallyVerifiable = options.mechanicallyVerifiable ?? false
+  const costControlEnabled = options.costControlEnabled ?? true
+  const verificationFailures = Math.max(0, options.verificationFailures ?? 0)
+  const budgetPressure = Math.max(0, options.budgetPressure ?? 0)
+  const reasons: string[] = []
+
+  let preferredRank = laneRank[decision.modelLane]
+
+  if (!costControlEnabled) {
+    preferredRank = 2
+    reasons.push('automatic cost control is disabled; prefer the deepest configured model')
+  } else if (verificationFailures > 0) {
+    preferredRank = Math.min(2, preferredRank + verificationFailures)
+    reasons.push(`verification failed ${verificationFailures} time(s); escalate model strength`)
+  } else {
+    if (mechanicallyVerifiable && risk === 'low' && preferredRank > 0) {
+      preferredRank -= 1
+      reasons.push('low-risk output can start one lane cheaper because it has mechanical verification')
+    }
+    if (budgetPressure >= 0.8 && budgetPressure < 1 && risk === 'low' && preferredRank > 0) {
+      preferredRank -= 1
+      reasons.push('daily budget is above 80%; prefer a cheaper lane where verification keeps risk bounded')
+    }
+  }
+
+  const hardBudgetStop = costControlEnabled && budgetPressure >= 1 && risk === 'low'
+  if (hardBudgetStop) reasons.push('daily budget is exhausted; paid models are blocked for low-risk work')
+
+  const available = uniqueTargets(targets)
+  let candidates: ModelTarget[]
+
+  if (hardBudgetStop) {
+    candidates = available.filter((target) => target.provider === 'local')
+  } else if (!costControlEnabled) {
+    candidates = [...available].sort((a, b) => laneRank[b.lane] - laneRank[a.lane])
+  } else {
+    candidates = available
+      .filter((target) => {
+        if (target.provider === 'local') {
+          return preferredRank === 0 && mechanicallyVerifiable && risk === 'low' && verificationFailures === 0
+        }
+        return laneRank[target.lane] >= preferredRank
+      })
+      .sort((a, b) => {
+        const aRank = a.provider === 'local' ? -1 : laneRank[a.lane]
+        const bRank = b.provider === 'local' ? -1 : laneRank[b.lane]
+        return aRank - bRank
+      })
+  }
+
+  if (candidates.length === 0 && !hardBudgetStop && available.length > 0) {
+    const strongest = [...available].sort((a, b) => laneRank[b.lane] - laneRank[a.lane])[0]
+    candidates = strongest ? [strongest] : []
+    reasons.push('preferred lane is unavailable; use the strongest configured fallback')
+  }
+
+  const preferredLane = rankLane[preferredRank]
+  if (!reasons.length) reasons.push(`start on the ${preferredLane} lane and escalate only after verification failure`)
+
+  return { preferredLane, candidates, hardBudgetStop, reasons }
 }
