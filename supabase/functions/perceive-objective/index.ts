@@ -3,6 +3,7 @@ import { governTask, routeModelTargets, type ModelPrice, type ModelProtocol, typ
 import { resolveObjectiveMeaning } from '../_shared/meaning-resolver.ts'
 import { planInitialRealityRoute } from '../_shared/reality-planner.ts'
 import { routePlannedCapabilities } from '../_shared/capability-router.ts'
+import { buildGitHubActionContract, repositoryFromGitHubLocator } from '../_shared/action-contract.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -278,10 +279,116 @@ Deno.serve(async (req: Request) => {
       : null
     const activeRouteId = continuationRouteId ?? routeId
 
+    let boundGitHubRepository: string | null = null
+    if (projectId && capabilityRouting.some((decision) => decision.adapter === 'github-operator')) {
+      const { data: bindings, error: bindingError } = await admin
+        .from('perception_project_source_bindings')
+        .select('source_id, relationship')
+        .eq('user_id', userData.user.id)
+        .eq('project_id', projectId)
+        .eq('active', true)
+
+      if (bindingError) {
+        console.error('Perception GitHub source binding lookup failed', {
+          code: bindingError.code,
+          message: bindingError.message,
+        })
+      } else {
+        const prioritizedBindings = [...(bindings ?? [])].sort((left, right) =>
+          Number(right.relationship === 'primary') - Number(left.relationship === 'primary')
+        )
+        const sourceIds = prioritizedBindings
+          .map((binding) => binding.source_id)
+          .filter((sourceId): sourceId is string => typeof sourceId === 'string')
+
+        if (sourceIds.length > 0) {
+          const { data: sources, error: sourceError } = await admin
+            .from('perception_sources')
+            .select('id, locator')
+            .in('id', sourceIds)
+            .eq('provider', 'github')
+            .eq('source_type', 'github_repo')
+            .eq('enabled', true)
+
+          if (sourceError) {
+            console.error('Perception GitHub source lookup failed', {
+              code: sourceError.code,
+              message: sourceError.message,
+            })
+          } else {
+            const sourceById = new Map((sources ?? []).map((source) => [source.id, source]))
+            for (const binding of prioritizedBindings) {
+              const source = sourceById.get(binding.source_id)
+              const repository = repositoryFromGitHubLocator(source?.locator)
+              if (repository) {
+                boundGitHubRepository = repository
+                break
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const actionContracts: Array<ReturnType<typeof buildGitHubActionContract>> = []
     const usageEvidence: Array<Record<string, unknown>> = []
 
     if (projectId) {
       for (const decision of capabilityRouting.filter((candidate) => candidate.executionMode === 'external')) {
+        const routeNode = routePlan.nodes.find((node) => node.key === decision.nodeKey)
+        let actionContract: ReturnType<typeof buildGitHubActionContract> | null = null
+
+        if (decision.adapter === 'github-operator' && routeNode) {
+          const draftContract = buildGitHubActionContract({
+            decision,
+            node: routeNode,
+            projectId,
+            objectiveId,
+            routeId: activeRouteId,
+            repository: boundGitHubRepository,
+          })
+
+          let permissionGrantId: string | null = null
+          if (draftContract.target && decision.permissionRequired) {
+            const { data: grants, error: grantError } = await admin
+              .from('perception_permission_grants')
+              .select('id, permission_level, expires_at')
+              .eq('user_id', userData.user.id)
+              .eq('project_id', projectId)
+              .eq('capability', 'code')
+              .eq('target', draftContract.target)
+              .is('revoked_at', null)
+
+            if (grantError) {
+              console.error('Perception action-contract permission lookup failed', {
+                code: grantError.code,
+                message: grantError.message,
+              })
+            } else {
+              const rank: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3 }
+              const requestedRank = rank[decision.permissionLevel] ?? Number.POSITIVE_INFINITY
+              const now = Date.now()
+              const grant = (grants ?? []).find((candidate) => {
+                const expiry = candidate.expires_at ? new Date(candidate.expires_at).getTime() : null
+                return (rank[candidate.permission_level] ?? -1) >= requestedRank
+                  && (expiry === null || expiry > now)
+              })
+              permissionGrantId = grant?.id ?? null
+            }
+          }
+
+          actionContract = buildGitHubActionContract({
+            decision,
+            node: routeNode,
+            projectId,
+            objectiveId,
+            routeId: activeRouteId,
+            repository: boundGitHubRepository,
+            permissionGrantId,
+          })
+          actionContracts.push(actionContract)
+        }
+
         const { error: intentError } = await admin.from('perception_execution_ledger').insert({
           user_id: userData.user.id,
           project_id: projectId,
@@ -289,11 +396,12 @@ Deno.serve(async (req: Request) => {
           route_id: activeRouteId,
           route_node_id: null,
           worker_run_id: null,
-          action_key: `capability_route:${objectiveId ?? crypto.randomUUID()}:${decision.nodeKey}`,
+          action_key: actionContract?.action_key
+            ?? `capability_route:${objectiveId ?? crypto.randomUUID()}:${decision.nodeKey}`,
           phase: decision.status === 'blocked' ? 'blocked' : 'intended',
           permission_level: decision.permissionLevel,
           capability: decision.capability,
-          target: null,
+          target: actionContract?.target ?? null,
           details: {
             adapter: decision.adapter,
             routing_status: decision.status,
@@ -301,6 +409,7 @@ Deno.serve(async (req: Request) => {
             permission_required: decision.permissionRequired,
             required_input_fields: decision.requiredInputFields,
             blockers: decision.blockers,
+            action_contract: actionContract,
           },
           evidence: [],
         })
@@ -434,6 +543,7 @@ Deno.serve(async (req: Request) => {
       meaning,
       route_plan: routePlan,
       capability_routing: capabilityRouting,
+      action_contracts: actionContracts,
       token_control: {
         enabled: costControlEnabled,
         budget_tier: tokenDecision.tier,
