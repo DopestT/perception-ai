@@ -17,7 +17,7 @@ Deno.serve(async (req: Request) => {
   const authHeader = req.headers.get('Authorization')
   if (!authHeader?.startsWith('Bearer ')) return json({ error: 'Authentication required' }, 401)
 
-  const githubToken = Deno.env.get('PERCEPTION_GITHUB_TOKEN')
+  const githubToken = Deno.env.get('PERCEPTION_GITHUB_TOKEN') || Deno.env.get('PERCEPTION_OPERATOR_TOKEN')
   const url = Deno.env.get('SUPABASE_URL')
   const publishableKeys = JSON.parse(Deno.env.get('SUPABASE_PUBLISHABLE_KEYS') ?? '{}') as Record<string, string>
   const secretKeys = JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS') ?? '{}') as Record<string, string>
