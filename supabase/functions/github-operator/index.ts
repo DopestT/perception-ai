@@ -121,7 +121,41 @@ Deno.serve(async (req: Request) => {
 
     return json({ ...result, ledger_recorded: true }, result.ok ? 200 : 400)
   } catch (error) {
-    console.error('GitHub operator failed', error instanceof Error ? error.message : 'unknown error')
-    return json({ error: 'GitHub operator execution failed' }, 500)
+    const message = error instanceof Error ? error.message : 'unknown error'
+    console.error('GitHub operator failed', message)
+
+    if (message.startsWith('GitHub 401:')) {
+      return json({
+        ok: false,
+        phase: 'failed',
+        error: 'GitHub rejected the configured Operator token. Create a new fine-grained token and update PERCEPTION_GITHUB_TOKEN.',
+        diagnostic: 'github_credential_rejected',
+      })
+    }
+
+    if (message.startsWith('GitHub 403:')) {
+      return json({
+        ok: false,
+        phase: 'failed',
+        error: 'GitHub accepted the token but denied this operation. Check repository access and Contents: Read and write permission.',
+        diagnostic: 'github_permission_denied',
+      })
+    }
+
+    if (message.startsWith('GitHub 404:')) {
+      return json({
+        ok: false,
+        phase: 'failed',
+        error: 'The configured GitHub token cannot access DopestT/perception-ai. Confirm the repository is selected on the fine-grained token.',
+        diagnostic: 'github_repository_not_accessible',
+      })
+    }
+
+    return json({
+      ok: false,
+      phase: 'failed',
+      error: 'GitHub Operator failed before verification.',
+      diagnostic: message.slice(0, 240),
+    })
   }
 })
