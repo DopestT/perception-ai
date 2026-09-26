@@ -75,6 +75,12 @@ function explicitExternalAction(desiredReality: string): { capability: Capabilit
   if (/\b(deploy|ship to production|release to production)\b/.test(value)) {
     return { capability: 'code', permission: 'P3', label: 'Deploy verified change' }
   }
+  if (
+    /\b(commit|create (?:a )?branch)\b/.test(value)
+    || (/\b(edit|modify|change|update|create)\b/.test(value) && /\b(github|repo|repository|branch|code)\b/.test(value))
+  ) {
+    return { capability: 'code', permission: 'P2', label: 'Make bounded repository change' }
+  }
   if (/\b(schedule|book|reserve)\b/.test(value)) {
     return { capability: 'schedule', permission: 'P2', label: 'Perform scheduled action' }
   }
