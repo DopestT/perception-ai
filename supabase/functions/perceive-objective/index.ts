@@ -69,6 +69,17 @@ Deno.serve(async (req: Request) => {
       model: Deno.env.get('PERCEPTION_MEANING_MODEL'),
     })
 
+    const runtimeCapabilities = ['reason', 'generate', 'verify'] as const
+    const operatorCapabilities = (Deno.env.get('PERCEPTION_OPERATOR_CAPABILITIES') ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0)
+
+    const availableCapabilities = Array.from(new Set([
+      ...runtimeCapabilities,
+      ...operatorCapabilities,
+    ]))
+
     const routePlan = planInitialRealityRoute({
       desiredReality: meaning.desired_reality,
       currentReality: meaning.current_reality,
@@ -76,6 +87,11 @@ Deno.serve(async (req: Request) => {
       successCriteria: meaning.success_criteria,
       deliverables: meaning.deliverables,
       knownUnknowns: meaning.known_unknowns,
+    }, {
+      availableCapabilities: availableCapabilities.filter((capability) =>
+        ['reason', 'research', 'retrieve', 'generate', 'edit', 'code', 'communicate', 'schedule', 'calculate', 'verify']
+          .includes(capability)
+      ) as Array<'reason' | 'research' | 'retrieve' | 'generate' | 'edit' | 'code' | 'communicate' | 'schedule' | 'calculate' | 'verify'>,
     })
 
     let runtimeData: unknown
