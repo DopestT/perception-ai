@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { validateGitHubExecutionRequest } from '../../supabase/functions/_shared/github-executor'
+import {
+  findUnexpectedChangedFiles,
+  validateExistingBranchForReuse,
+  validateGitHubExecutionRequest,
+} from '../../supabase/functions/_shared/github-executor'
 
 const valid = {
   repository: 'DopestT/perception-ai',
@@ -32,5 +36,39 @@ describe('GitHub executor boundary', () => {
   it('blocks repository path traversal', () => {
     const input = { ...valid, files: [{ path: '../secret', content: 'no' }] }
     expect(validateGitHubExecutionRequest(input).join(' ')).toContain('inside the repository')
+  })
+
+  it('allows an existing ahead branch when changes stay inside the planned file set', () => {
+    expect(
+      validateExistingBranchForReuse('ahead', ['src/example.ts'], ['src/example.ts']),
+    ).toEqual([])
+  })
+
+  it('allows an identical existing branch for an idempotent desired-state retry', () => {
+    expect(
+      validateExistingBranchForReuse('identical', [], ['src/example.ts']),
+    ).toEqual([])
+  })
+
+  it('blocks stale or diverged existing branches instead of writing over them', () => {
+    expect(
+      validateExistingBranchForReuse('diverged', ['src/example.ts'], ['src/example.ts']).join(' '),
+    ).toContain('not safely reusable')
+  })
+
+  it('blocks scope drift on an existing branch', () => {
+    expect(
+      validateExistingBranchForReuse(
+        'ahead',
+        ['src/example.ts', 'production-secret.txt'],
+        ['src/example.ts'],
+      ).join(' '),
+    ).toContain('unplanned changes')
+  })
+
+  it('reports unexpected changed files deterministically', () => {
+    expect(
+      findUnexpectedChangedFiles(['a.ts', 'b.ts'], ['a.ts']),
+    ).toEqual(['b.ts'])
   })
 })
