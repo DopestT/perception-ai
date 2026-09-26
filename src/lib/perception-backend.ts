@@ -296,6 +296,33 @@ export type ProjectWorld = {
   }>
 }
 
+export type GitHubActionContract = {
+  version: 'github.change.v1'
+  action_key: string
+  adapter: 'github-operator'
+  project_id: string
+  objective_id: string | null
+  route_id: string | null
+  node_key: string
+  repository: string | null
+  target: string | null
+  base_branch: string
+  working_branch: string
+  desired_changes: string
+  files_or_patch: unknown
+  tests: string[]
+  permission: {
+    required: boolean
+    level: 'P0' | 'P1' | 'P2' | 'P3'
+    capability: 'code'
+    target: string | null
+    grant_id: string | null
+    status: 'not_required' | 'required' | 'active'
+  }
+  missing_fields: string[]
+  status: 'needs_source' | 'needs_scope' | 'awaiting_permission' | 'ready'
+}
+
 export type ObjectiveRuntimeResult = {
   ok: boolean
   stages?: string[]
@@ -306,6 +333,7 @@ export type ObjectiveRuntimeResult = {
   artifact_id?: string
   verification_id?: string
   stage?: string
+  action_contracts?: GitHubActionContract[]
 }
 
 export type ProjectLedgers = {
@@ -653,10 +681,24 @@ export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfT
   if (!authData.user) throw new Error('Sign in before running the Operator self-test.')
 
   const projectId = objective.project_id
-  const repository = 'DopestT/perception-ai'
-  const baseBranch = 'main'
-  const target = `github://${repository}@${baseBranch}`
-  const branch = `perception/operator-proof-${Date.now()}`
+  const contract = objective.action_contracts?.find(
+    (candidate) => candidate.adapter === 'github-operator' && candidate.permission.level === 'P2',
+  )
+
+  if (!contract) {
+    throw new Error('Perception did not produce a bounded GitHub action contract for the Operator proof.')
+  }
+  if (!contract.repository || !contract.target) {
+    throw new Error(`GitHub action contract is missing source scope: ${contract.missing_fields.join(', ') || 'repository/target'}.`)
+  }
+  if (contract.target !== 'github://DopestT/perception-ai@main') {
+    throw new Error(`Operator proof contract resolved an unexpected target: ${contract.target}.`)
+  }
+
+  const repository = contract.repository
+  const baseBranch = contract.base_branch
+  const target = contract.target
+  const branch = contract.working_branch
   const { data: grantId, error: grantError } = await client.rpc('perception_request_operator_proof_grant', {
     p_project_id: projectId,
   })
@@ -670,6 +712,7 @@ export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfT
     'This file was created by the Perception GitHub Operator on a bounded branch.',
     '',
     `Project World: ${projectId}`,
+    `Action contract: ${contract.action_key}`,
     `Branch: ${branch}`,
     `Observed at: ${new Date().toISOString()}`,
     '',
@@ -681,7 +724,7 @@ export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfT
     repository,
     base_branch: baseBranch,
     branch,
-    summary: 'Perception live operator proof',
+    summary: contract.desired_changes || 'Perception live operator proof',
     files: [{ path: 'docs/OPERATOR_LIVE_PROOF.md', content: proofContent }],
     permission: {
       project_id: projectId,
