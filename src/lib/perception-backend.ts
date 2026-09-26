@@ -317,7 +317,7 @@ export async function getSession(): Promise<Session | null> {
 
 export async function requestEmailSignIn(email: string): Promise<void> {
   const client = requireBackend()
-  const configuredAppUrl = (import.meta.env.VITE_APP_URL || 'https://perceptionai.io').replace(/\/$/, '')
+  const configuredAppUrl = (import.meta.env.VITE_APP_URL || 'https://www.perceptionai.io').replace(/\/$/, '')
   const redirectBase = typeof window === 'undefined'
     ? configuredAppUrl
     : /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname)
