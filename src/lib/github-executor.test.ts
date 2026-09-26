@@ -24,6 +24,12 @@ describe('GitHub executor boundary', () => {
     expect(validateGitHubExecutionRequest({ ...valid, branch: 'main' }).join(' ')).toContain('bounded branch')
   })
 
+  it('requires an explicit observed base branch instead of defaulting to main', () => {
+    const input = { ...valid, base_branch: '' }
+    expect(validateGitHubExecutionRequest(input).join(' ')).toContain('explicit valid base branch')
+  })
+
+
   it('blocks permission target drift', () => {
     const input = { ...valid, permission: { ...valid.permission, target: 'github://DopestT/other@main' } }
     expect(validateGitHubExecutionRequest(input).join(' ')).toContain('exactly match')

@@ -1,6 +1,6 @@
 type GitHubExecutionRequest = {
   repository: string
-  base_branch?: string
+  base_branch: string
   branch: string
   summary: string
   files: Array<{ path: string; content: string }>
@@ -18,10 +18,11 @@ const allowedBranch = /^[A-Za-z0-9._/-]+$/
 
 export function validateGitHubExecutionRequest(input: GitHubExecutionRequest): string[] {
   const failures: string[] = []
-  const baseBranch = input.base_branch || 'main'
-  const target = `github://${input.repository}@${baseBranch}`
+  const baseBranch = input.base_branch
+  const target = baseBranch ? `github://${input.repository}@${baseBranch}` : null
 
   if (!allowedRepository.test(input.repository)) failures.push('Repository must use owner/name format.')
+  if (!baseBranch || !allowedBranch.test(baseBranch) || baseBranch.includes('..')) failures.push('An explicit valid base branch is required.')
   if (!allowedBranch.test(input.branch) || input.branch.includes('..')) failures.push('Branch name is invalid.')
   if (input.branch === baseBranch) failures.push('Operator writes must use a bounded branch, never the base branch.')
   if (!input.files.length) failures.push('At least one planned file is required.')
@@ -57,7 +58,7 @@ export async function executeBoundedGitHubChange(input: GitHubExecutionRequest, 
   const failures = validateGitHubExecutionRequest(input)
   if (failures.length) return { ok: false, phase: 'blocked', failures }
 
-  const baseBranch = input.base_branch || 'main'
+  const baseBranch = input.base_branch
   const [owner, repository] = input.repository.split('/')
   const api = `https://api.github.com/repos/${owner}/${repository}`
   const base = await githubJson(token, `${api}/git/ref/heads/${encodeURIComponent(baseBranch)}`)
