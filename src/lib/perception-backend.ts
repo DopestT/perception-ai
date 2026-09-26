@@ -523,3 +523,115 @@ export async function removeProjectArtifact(objectPath: string): Promise<void> {
 
   if (error) throw error
 }
+
+
+export type GitHubOperatorSelfTestResult = {
+  project_id: string
+  branch: string
+  commit_sha: string | null
+  changed_files: string[]
+}
+
+type GitHubOperatorResponse = {
+  ok: boolean
+  phase?: string
+  dry_run?: boolean
+  branch?: string
+  commit_sha?: string | null
+  changed_files?: string[]
+  error?: string
+}
+
+export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfTestResult> {
+  const client = requireBackend()
+  const objective = await submitObjective(
+    'Change the Perception GitHub repository on a bounded branch, verify the external effect independently, and update Project World without changing main.',
+  )
+  if (!objective.ok || !objective.project_id) {
+    throw new Error(objective.stage || 'Could not create the Operator self-test Project World.')
+  }
+
+  const { data: authData, error: authError } = await client.auth.getUser()
+  if (authError) throw authError
+  if (!authData.user) throw new Error('Sign in before running the Operator self-test.')
+
+  const projectId = objective.project_id
+  const repository = 'DopestT/perception-ai'
+  const baseBranch = 'main'
+  const target = `github://${repository}@${baseBranch}`
+  const branch = `perception/operator-proof-${Date.now()}`
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString()
+
+  const { data: grant, error: grantError } = await client
+    .from('perception_permission_grants')
+    .insert({
+      user_id: authData.user.id,
+      project_id: projectId,
+      permission_level: 'P2',
+      capability: 'code',
+      target,
+      scope_note: 'One-time Perception self-test: bounded branch write only.',
+      expires_at: expiresAt,
+    })
+    .select('id')
+    .single()
+
+  if (grantError) throw grantError
+
+  const proofContent = [
+    '# Perception Operator Live Proof',
+    '',
+    'This file was created by the Perception GitHub Operator on a bounded branch.',
+    '',
+    `Project World: ${projectId}`,
+    `Branch: ${branch}`,
+    `Observed at: ${new Date().toISOString()}`,
+    '',
+    'Invariant: main is not modified by this proof.',
+    '',
+  ].join('\n')
+
+  const body = {
+    repository,
+    base_branch: baseBranch,
+    branch,
+    summary: 'Perception live operator proof',
+    files: [{ path: 'docs/OPERATOR_LIVE_PROOF.md', content: proofContent }],
+    permission: {
+      project_id: projectId,
+      capability: 'code' as const,
+      target,
+      level: 'P2' as const,
+    },
+  }
+
+  try {
+    const { data: dryRun, error: dryRunError } = await client.functions.invoke<GitHubOperatorResponse>('github-operator', {
+      body: { ...body, execute: false },
+    })
+    if (dryRunError) throw dryRunError
+    if (!dryRun?.ok || dryRun.phase !== 'authorized') {
+      throw new Error(dryRun?.error || 'GitHub Operator dry-run authorization failed.')
+    }
+
+    const { data: executed, error: executeError } = await client.functions.invoke<GitHubOperatorResponse>('github-operator', {
+      body: { ...body, execute: true },
+    })
+    if (executeError) throw executeError
+    if (!executed?.ok || executed.phase !== 'observed') {
+      throw new Error(executed?.error || 'GitHub Operator execution was not independently observed.')
+    }
+
+    return {
+      project_id: projectId,
+      branch: executed.branch || branch,
+      commit_sha: executed.commit_sha || null,
+      changed_files: executed.changed_files || [],
+    }
+  } finally {
+    await client
+      .from('perception_permission_grants')
+      .update({ revoked_at: new Date().toISOString() })
+      .eq('id', grant.id)
+  }
+}
