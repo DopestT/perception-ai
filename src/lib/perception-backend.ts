@@ -370,6 +370,12 @@ export async function signInWithPasskey(): Promise<void> {
   if (error) throw error
 }
 
+export async function registerPasskey(): Promise<void> {
+  const client = requireBackend()
+  const { error } = await client.auth.registerPasskey()
+  if (error) throw error
+}
+
 export async function signOut(): Promise<void> {
   const client = requireBackend()
   const { error } = await client.auth.signOut()
