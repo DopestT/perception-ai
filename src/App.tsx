@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Clock3, Compass, LogOut, Mail, Search, Sparkles, X } from 'lucide-react'
+import { Check, Clock3, Compass, KeyRound, LogOut, Mail, Search, Sparkles, X } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { ForecastPanel } from './ForecastPanel'
 import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPortal'
@@ -14,7 +14,12 @@ import {
   getProjectWorld,
   getSession,
   requestEmailSignIn,
+  registerPasskey,
   resolveForecast,
+  signInWithOAuthProvider,
+  signInWithPasskey,
+  signInWithPassword,
+  signUpWithPassword,
   runAutonomousForecast,
   runPerceptionGitHubSelfTest,
   signOut,
@@ -68,6 +73,8 @@ function defaultForecastDeadline() {
   date.setDate(date.getDate() + 30)
   return date.toISOString().slice(0, 10)
 }
+
+type AuthMode = 'signin' | 'signup' | 'magic'
 
 type PendingObjective = {
   statement: string
@@ -128,6 +135,8 @@ function App() {
   const [forecastDeadline, setForecastDeadline] = useState(defaultForecastDeadline)
   const [input, setInput] = useState('')
   const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [authMode, setAuthMode] = useState<AuthMode>('signin')
   const [authOpen, setAuthOpen] = useState(false)
   const [authSent, setAuthSent] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -135,6 +144,7 @@ function App() {
   const [attachingMarket, setAttachingMarket] = useState(false)
   const [runningIntelligence, setRunningIntelligence] = useState(false)
   const [runningOperatorTest, setRunningOperatorTest] = useState(false)
+  const [registeringPasskey, setRegisteringPasskey] = useState(false)
   const [marketNote, setMarketNote] = useState('')
   const [intelligenceNote, setIntelligenceNote] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
@@ -341,6 +351,72 @@ function App() {
     }
   }
 
+  const handleOAuthSignIn = async (provider: 'google' | 'apple') => {
+    if (authBusy) return
+    setAuthBusy(true)
+    setError('')
+    try {
+      await signInWithOAuthProvider(provider)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : `Could not continue with ${provider}.`)
+      setAuthBusy(false)
+    }
+  }
+
+  const handlePasskeySignIn = async () => {
+    if (authBusy) return
+    setAuthBusy(true)
+    setError('')
+    try {
+      await signInWithPasskey()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Passkey sign-in is not available yet.')
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  const handleRegisterPasskey = async () => {
+    if (registeringPasskey) return
+    setRegisteringPasskey(true)
+    setError('')
+    setNotice('')
+    try {
+      await registerPasskey()
+      setNotice('Passkey enabled. Next time, you can sign in with Face ID, Touch ID, your device PIN, or a security key.')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Perception could not register a passkey on this device.')
+    } finally {
+      setRegisteringPasskey(false)
+    }
+  }
+
+  const handlePasswordAuth = async (event: FormEvent) => {
+    event.preventDefault()
+    const address = email.trim()
+    if (!address || password.length < 8 || authBusy) return
+
+    setAuthBusy(true)
+    setError('')
+    setNotice('')
+
+    try {
+      if (authMode === 'signup') {
+        const result = await signUpWithPassword(address, password)
+        if (result.requiresEmailConfirmation) {
+          setAuthSent(true)
+          setNotice('Check your email once to confirm this account. After that, use your password or passkey.')
+        }
+      } else {
+        await signInWithPassword(address, password)
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not authenticate this account.')
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
   const handleRunIntelligence = async () => {
     if (!forecast || forecast.status !== 'open' || runningIntelligence) return
     setRunningIntelligence(true)
@@ -472,6 +548,7 @@ function App() {
   const closeAuth = () => {
     setAuthOpen(false)
     setAuthSent(false)
+    setPassword('')
     setPortalMode(input ? 'focused' : 'idle')
   }
 
@@ -496,6 +573,9 @@ function App() {
               {runningOperatorTest ? 'OPERATOR RUNNING…' : 'RUN OPERATOR PROOF'}
             </button>
             <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth' })}>PROJECT WORLD</button>
+            <button className="quiet-action" type="button" onClick={handleRegisterPasskey} disabled={registeringPasskey}>
+              {registeringPasskey ? 'ADDING PASSKEY…' : 'ENABLE PASSKEY'}
+            </button>
             <button className="icon-action" type="button" onClick={logout} aria-label="Sign out"><LogOut size={15} /></button>
           </div>
         ) : (
@@ -707,29 +787,91 @@ function App() {
 
       {authOpen && (
         <div className="auth-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeAuth() }}>
-          <section className="auth-card" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+          <section className="auth-card auth-card--modern" role="dialog" aria-modal="true" aria-labelledby="auth-title">
             <button className="auth-close" type="button" onClick={closeAuth} aria-label="Close sign in"><X size={18} /></button>
-            <div className="auth-icon"><Mail size={18} /></div>
+            <div className="auth-icon"><KeyRound size={18} /></div>
+
             {!authSent ? (
               <>
-                <p className="section-kicker">SAVE YOUR PROJECT WORLD</p>
-                <h2 id="auth-title">Perception has your idea.</h2>
-                <p>Sign in so Perception can remember what happens next. Your idea will continue automatically.</p>
-                <form onSubmit={requestSignIn} className="auth-form">
-                  <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email address" required autoFocus />
-                  <button type="submit" disabled={authBusy || !email.trim()}>{authBusy ? 'SENDING…' : 'CONTINUE'}</button>
-                </form>
+                <p className="section-kicker">YOUR PERCEPTION ACCOUNT</p>
+                <h2 id="auth-title">Continue your Project World.</h2>
+                <p>Choose the fastest secure way in. Your existing Perception history stays attached to the same verified account.</p>
+
+                <div className="auth-provider-stack">
+                  <button type="button" className="auth-provider" onClick={() => handleOAuthSignIn('google')} disabled={authBusy}>
+                    <span className="auth-provider-mark">G</span>
+                    <span>Continue with Google</span>
+                  </button>
+                  <button type="button" className="auth-provider" onClick={() => handleOAuthSignIn('apple')} disabled={authBusy}>
+                    <span className="auth-provider-mark">A</span>
+                    <span>Continue with Apple</span>
+                  </button>
+                  <button type="button" className="auth-provider" onClick={handlePasskeySignIn} disabled={authBusy}>
+                    <KeyRound size={16} />
+                    <span>Use a passkey</span>
+                  </button>
+                </div>
+
+                <div className="auth-divider"><span>or use email</span></div>
+
+                {authMode !== 'magic' ? (
+                  <>
+                    <div className="auth-mode-switch" role="tablist" aria-label="Email authentication mode">
+                      <button type="button" className={authMode === 'signin' ? 'auth-mode-tab auth-mode-tab--active' : 'auth-mode-tab'} onClick={() => setAuthMode('signin')}>SIGN IN</button>
+                      <button type="button" className={authMode === 'signup' ? 'auth-mode-tab auth-mode-tab--active' : 'auth-mode-tab'} onClick={() => setAuthMode('signup')}>CREATE ACCOUNT</button>
+                    </div>
+                    <form onSubmit={handlePasswordAuth} className="auth-password-form">
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={(event) => setEmail(event.target.value)}
+                        placeholder="Email address"
+                        autoComplete="email"
+                        required
+                      />
+                      <input
+                        type="password"
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                        placeholder={authMode === 'signup' ? 'Create a password' : 'Password'}
+                        autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
+                        minLength={8}
+                        required
+                      />
+                      <button type="submit" disabled={authBusy || !email.trim() || password.length < 8}>
+                        {authBusy ? 'WORKING…' : authMode === 'signup' ? 'CREATE ACCOUNT' : 'SIGN IN'}
+                      </button>
+                    </form>
+                    <button className="auth-text-action" type="button" onClick={() => { setAuthMode('magic'); setAuthSent(false); setPassword('') }}>
+                      Email me a sign-in link instead
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <form onSubmit={requestSignIn} className="auth-password-form">
+                      <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email address" autoComplete="email" required autoFocus />
+                      <button type="submit" disabled={authBusy || !email.trim()}>{authBusy ? 'SENDING…' : 'SEND SIGN-IN LINK'}</button>
+                    </form>
+                    <button className="auth-text-action" type="button" onClick={() => setAuthMode('signin')}>Use password or another method</button>
+                  </>
+                )}
               </>
             ) : (
               <>
                 <p className="section-kicker">CHECK YOUR EMAIL</p>
-                <h2 id="auth-title">Your idea is waiting here.</h2>
-                <p>Open the secure Perception sign-in link we sent to <strong>{email}</strong>. When you return, the original idea will continue automatically.</p>
-                <button className="auth-secondary" type="button" onClick={() => setAuthSent(false)}>USE A DIFFERENT EMAIL</button>
+                <h2 id="auth-title">{authMode === 'signup' ? 'Confirm your account.' : 'Your Project World is waiting.'}</h2>
+                <p>
+                  We sent a secure message to <strong>{email}</strong>.
+                  {authMode === 'signup'
+                    ? ' Confirm it once, then you can sign in with your password and add a passkey.'
+                    : ' Open the newest sign-in link and you will return here automatically.'}
+                </p>
+                <button className="auth-secondary" type="button" onClick={() => setAuthSent(false)}>BACK TO SIGN IN</button>
               </>
             )}
+
             {error && <p className="auth-error" role="alert">{error}</p>}
-            <small>Authentication protects durable Project World ownership. Perception does not need your password.</small>
+            <small>Google and Apple identities with the same verified email are automatically linked by Supabase Auth. Passkeys require one-time enrollment after an account is confirmed.</small>
           </section>
         </div>
       )}

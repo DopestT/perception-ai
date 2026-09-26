@@ -14,6 +14,7 @@ export const supabase = backendConfigured
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
+        experimental: { passkey: true },
       },
     })
   : null
@@ -315,20 +316,63 @@ export async function getSession(): Promise<Session | null> {
   return data.session
 }
 
-export async function requestEmailSignIn(email: string): Promise<void> {
-  const client = requireBackend()
+function authRedirectTo(): string {
   const configuredAppUrl = (import.meta.env.VITE_APP_URL || 'https://www.perceptionai.io').replace(/\/$/, '')
   const redirectBase = typeof window === 'undefined'
     ? configuredAppUrl
     : /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname)
       ? configuredAppUrl
       : window.location.origin
-  const redirectTo = `${redirectBase}/?auth=return`
+  return `${redirectBase}/?auth=return`
+}
 
+export async function requestEmailSignIn(email: string): Promise<void> {
+  const client = requireBackend()
   const { error } = await client.auth.signInWithOtp({
     email,
-    options: { emailRedirectTo: redirectTo, shouldCreateUser: true },
+    options: { emailRedirectTo: authRedirectTo(), shouldCreateUser: true },
   })
+  if (error) throw error
+}
+
+export async function signInWithOAuthProvider(provider: 'google' | 'apple'): Promise<void> {
+  const client = requireBackend()
+  const { error } = await client.auth.signInWithOAuth({
+    provider,
+    options: { redirectTo: authRedirectTo() },
+  })
+  if (error) throw error
+}
+
+export async function signInWithPassword(email: string, password: string): Promise<void> {
+  const client = requireBackend()
+  const { error } = await client.auth.signInWithPassword({ email, password })
+  if (error) throw error
+}
+
+export async function signUpWithPassword(
+  email: string,
+  password: string,
+): Promise<{ requiresEmailConfirmation: boolean }> {
+  const client = requireBackend()
+  const { data, error } = await client.auth.signUp({
+    email,
+    password,
+    options: { emailRedirectTo: authRedirectTo() },
+  })
+  if (error) throw error
+  return { requiresEmailConfirmation: !data.session }
+}
+
+export async function signInWithPasskey(): Promise<void> {
+  const client = requireBackend()
+  const { error } = await client.auth.signInWithPasskey()
+  if (error) throw error
+}
+
+export async function registerPasskey(): Promise<void> {
+  const client = requireBackend()
+  const { error } = await client.auth.registerPasskey()
   if (error) throw error
 }
 
