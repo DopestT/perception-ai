@@ -3,8 +3,17 @@ import {
   cacheRatio,
   estimateCostUsd,
   governTask,
+  routeModelTargets,
   selectContext,
+  type ModelTarget,
 } from './token-efficiency'
+
+const targets: ModelTarget[] = [
+  { id: 'local', provider: 'local', model: 'qwen-local', lane: 'economy' },
+  { id: 'economy', provider: 'openai', model: 'economy-model', lane: 'economy' },
+  { id: 'balanced', provider: 'openai', model: 'balanced-model', lane: 'balanced' },
+  { id: 'deep', provider: 'openai', model: 'deep-model', lane: 'deep' },
+]
 
 describe('token efficiency governor', () => {
   it('keeps routine work on the tiny economy lane', () => {
@@ -48,5 +57,53 @@ describe('token efficiency governor', () => {
     const price = { inputUsdPerMillion: 4, cachedInputUsdPerMillion: 0.4, outputUsdPerMillion: 20 }
     expect(estimateCostUsd(usage, price)).toBe(3.3)
     expect(cacheRatio(usage)).toBe(0.75)
+  })
+
+  it('starts mechanically verifiable low-risk work locally and escalates upward', () => {
+    const decision = governTask({ statement: 'Extract this into structured JSON.', capability: 'reason', risk: 'low' })
+    const route = routeModelTargets(decision, targets, {
+      risk: 'low',
+      mechanicallyVerifiable: true,
+      costControlEnabled: true,
+    })
+
+    expect(route.candidates.map((target) => target.id)).toEqual(['local', 'economy', 'balanced', 'deep'])
+  })
+
+  it('escalates after verification failure instead of retrying cheap lanes', () => {
+    const decision = governTask({ statement: 'Extract this into structured JSON.', capability: 'reason', risk: 'low' })
+    const route = routeModelTargets(decision, targets, {
+      risk: 'low',
+      mechanicallyVerifiable: true,
+      costControlEnabled: true,
+      verificationFailures: 1,
+    })
+
+    expect(route.preferredLane).toBe('balanced')
+    expect(route.candidates.map((target) => target.id)).toEqual(['balanced', 'deep'])
+  })
+
+  it('blocks paid models after a hard daily budget stop for low-risk work', () => {
+    const decision = governTask({ statement: 'Summarize this.', capability: 'reason', risk: 'low' })
+    const route = routeModelTargets(decision, targets, {
+      risk: 'low',
+      mechanicallyVerifiable: true,
+      costControlEnabled: true,
+      budgetPressure: 1.05,
+    })
+
+    expect(route.hardBudgetStop).toBe(true)
+    expect(route.candidates.map((target) => target.id)).toEqual(['local'])
+  })
+
+  it('prefers the deepest configured lane when automatic cost control is disabled', () => {
+    const decision = governTask({ statement: 'Summarize this.', capability: 'reason', risk: 'low' })
+    const route = routeModelTargets(decision, targets, {
+      risk: 'low',
+      mechanicallyVerifiable: true,
+      costControlEnabled: false,
+    })
+
+    expect(route.candidates[0]?.id).toBe('deep')
   })
 })

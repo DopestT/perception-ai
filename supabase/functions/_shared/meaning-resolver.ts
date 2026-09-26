@@ -1,3 +1,5 @@
+import type { ModelLane, ModelProvider, ModelProtocol, ModelTarget } from './token-efficiency.ts'
+
 export type ObjectiveUrgency = 'low' | 'normal' | 'high' | 'critical'
 
 export type MeaningClaim = {
@@ -5,6 +7,23 @@ export type MeaningClaim = {
   statement: string
   confidence: number
   route_impact: string
+}
+
+export type ResolverUsage = {
+  inputTokens: number
+  cachedInputTokens: number
+  outputTokens: number
+  reasoningTokens: number
+}
+
+export type ResolverAttempt = {
+  provider: ModelProvider
+  model: string
+  lane: ModelLane
+  protocol: ModelProtocol
+  ok: boolean
+  reason?: string
+  usage?: ResolverUsage
 }
 
 export type ResolvedObjectiveMeaning = {
@@ -18,12 +37,17 @@ export type ResolvedObjectiveMeaning = {
   inferred_claims: MeaningClaim[]
   confidence: number
   source: 'openai' | 'deterministic_fallback'
+  provider: ModelProvider | null
   model: string | null
+  routing_attempts: ResolverAttempt[]
+  usage?: ResolverUsage
 }
 
 type ResolverOptions = {
   apiKey?: string | null
   model?: string | null
+  candidates?: ModelTarget[]
+  maxOutputTokens?: number
   fetchImpl?: typeof fetch
 }
 
@@ -67,6 +91,9 @@ const schema = {
   additionalProperties: false,
 } as const
 
+const systemPrompt =
+  'Resolve a user objective into structured project semantics. Preserve direct user meaning. Do not invent facts, constraints, deadlines, dependencies, or current-state claims. Put missing material facts in known_unknowns. inferred_claims must contain only useful routing inferences and must be labeled with conservative confidence.'
+
 function compactStrings(value: unknown, limit: number): string[] {
   if (!Array.isArray(value)) return []
   return value
@@ -82,7 +109,13 @@ function clamp(value: unknown, fallback: number): number {
     : fallback
 }
 
-function normalizeMeaning(raw: Record<string, unknown>, statement: string, model: string): ResolvedObjectiveMeaning {
+function normalizeMeaning(
+  raw: Record<string, unknown>,
+  statement: string,
+  target: ModelTarget,
+  attempts: ResolverAttempt[],
+  usage?: ResolverUsage,
+): ResolvedObjectiveMeaning {
   const urgency = ['low', 'normal', 'high', 'critical'].includes(String(raw.urgency))
     ? raw.urgency as ObjectiveUrgency
     : 'normal'
@@ -117,11 +150,17 @@ function normalizeMeaning(raw: Record<string, unknown>, statement: string, model
     inferred_claims: claims,
     confidence: clamp(raw.confidence, 0.65),
     source: 'openai',
-    model,
+    provider: target.provider,
+    model: target.model,
+    routing_attempts: attempts,
+    usage,
   }
 }
 
-export function deterministicMeaning(statement: string): ResolvedObjectiveMeaning {
+export function deterministicMeaning(
+  statement: string,
+  attempts: ResolverAttempt[] = [],
+): ResolvedObjectiveMeaning {
   const normalized = statement.toLowerCase()
   const urgency: ObjectiveUrgency =
     /\b(emergency|critical|immediately|right now)\b/.test(normalized)
@@ -149,7 +188,9 @@ export function deterministicMeaning(statement: string): ResolvedObjectiveMeanin
     inferred_claims: [],
     confidence: 0.55,
     source: 'deterministic_fallback',
+    provider: null,
     model: null,
+    routing_attempts: attempts,
   }
 }
 
@@ -170,53 +211,169 @@ function responseText(payload: Record<string, unknown>): string | null {
   return null
 }
 
+function chatCompletionText(payload: Record<string, unknown>): string | null {
+  if (!Array.isArray(payload.choices)) return null
+  const first = payload.choices[0]
+  if (!first || typeof first !== 'object' || Array.isArray(first)) return null
+  const message = (first as Record<string, unknown>).message
+  if (!message || typeof message !== 'object' || Array.isArray(message)) return null
+  const content = (message as Record<string, unknown>).content
+  return typeof content === 'string' && content.trim() ? content : null
+}
+
+function usageFromPayload(payload: Record<string, unknown>, protocol: ModelProtocol): ResolverUsage | undefined {
+  const raw = payload.usage
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+  const usage = raw as Record<string, unknown>
+
+  if (protocol === 'chat_completions') {
+    const promptDetails = usage.prompt_tokens_details
+    const details = promptDetails && typeof promptDetails === 'object' && !Array.isArray(promptDetails)
+      ? promptDetails as Record<string, unknown>
+      : {}
+    return {
+      inputTokens: Number(usage.prompt_tokens ?? 0) || 0,
+      cachedInputTokens: Number(details.cached_tokens ?? 0) || 0,
+      outputTokens: Number(usage.completion_tokens ?? 0) || 0,
+      reasoningTokens: 0,
+    }
+  }
+
+  const inputDetails = usage.input_tokens_details
+  const outputDetails = usage.output_tokens_details
+  const input = inputDetails && typeof inputDetails === 'object' && !Array.isArray(inputDetails)
+    ? inputDetails as Record<string, unknown>
+    : {}
+  const output = outputDetails && typeof outputDetails === 'object' && !Array.isArray(outputDetails)
+    ? outputDetails as Record<string, unknown>
+    : {}
+
+  return {
+    inputTokens: Number(usage.input_tokens ?? 0) || 0,
+    cachedInputTokens: Number(input.cached_tokens ?? 0) || 0,
+    outputTokens: Number(usage.output_tokens ?? 0) || 0,
+    reasoningTokens: Number(output.reasoning_tokens ?? 0) || 0,
+  }
+}
+
+function targetEndpoint(target: ModelTarget, protocol: ModelProtocol): string {
+  const base = (target.baseUrl?.trim() || 'https://api.openai.com/v1').replace(/\/$/, '')
+  return protocol === 'chat_completions' ? `${base}/chat/completions` : `${base}/responses`
+}
+
+function legacyTarget(options: ResolverOptions): ModelTarget[] {
+  const apiKey = options.apiKey?.trim()
+  const model = options.model?.trim()
+  if (!apiKey || !model) return []
+  return [{
+    id: 'legacy-meaning-model',
+    provider: 'openai',
+    model,
+    lane: 'economy',
+    protocol: 'responses',
+    apiKey,
+  }]
+}
+
 export async function resolveObjectiveMeaning(
   statement: string,
   options: ResolverOptions = {},
 ): Promise<ResolvedObjectiveMeaning> {
-  const fallback = deterministicMeaning(statement)
-  const apiKey = options.apiKey?.trim()
-  const model = options.model?.trim()
-  if (!apiKey || !model) return fallback
-
   const fetchImpl = options.fetchImpl ?? fetch
+  const candidates = options.candidates?.length ? options.candidates : legacyTarget(options)
+  const attempts: ResolverAttempt[] = []
 
-  try {
-    const response = await fetchImpl('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        input: [
-          {
-            role: 'system',
-            content:
-              'Resolve a user objective into structured project semantics. Preserve direct user meaning. Do not invent facts, constraints, deadlines, dependencies, or current-state claims. Put missing material facts in known_unknowns. inferred_claims must contain only useful routing inferences and must be labeled with conservative confidence.',
-          },
-          { role: 'user', content: statement },
-        ],
-        text: {
-          format: {
+  for (const target of candidates) {
+    const protocol = target.protocol ?? 'responses'
+    const apiKey = target.apiKey?.trim() || (target.provider === 'openai' ? options.apiKey?.trim() : '')
+    if (target.provider === 'openai' && !apiKey) {
+      attempts.push({ provider: target.provider, model: target.model, lane: target.lane, protocol, ok: false, reason: 'missing_api_key' })
+      continue
+    }
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`
+
+    const body = protocol === 'chat_completions'
+      ? {
+          model: target.model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: statement },
+          ],
+          response_format: {
             type: 'json_schema',
-            name: 'perception_objective_meaning',
-            strict: true,
-            schema,
+            json_schema: {
+              name: 'perception_objective_meaning',
+              strict: true,
+              schema,
+            },
           },
-        },
-      }),
-    })
+          ...(options.maxOutputTokens ? { max_tokens: options.maxOutputTokens } : {}),
+        }
+      : {
+          model: target.model,
+          input: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: statement },
+          ],
+          text: {
+            format: {
+              type: 'json_schema',
+              name: 'perception_objective_meaning',
+              strict: true,
+              schema,
+            },
+          },
+          ...(options.maxOutputTokens ? { max_output_tokens: options.maxOutputTokens } : {}),
+        }
 
-    if (!response.ok) return fallback
-    const payload = await response.json() as Record<string, unknown>
-    const text = responseText(payload)
-    if (!text) return fallback
+    try {
+      const response = await fetchImpl(targetEndpoint(target, protocol), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      })
 
-    const parsed = JSON.parse(text) as Record<string, unknown>
-    return normalizeMeaning(parsed, statement, model)
-  } catch {
-    return fallback
+      if (!response.ok) {
+        attempts.push({
+          provider: target.provider,
+          model: target.model,
+          lane: target.lane,
+          protocol,
+          ok: false,
+          reason: `http_${response.status}`,
+        })
+        continue
+      }
+
+      const payload = await response.json() as Record<string, unknown>
+      const usage = usageFromPayload(payload, protocol)
+      const text = protocol === 'chat_completions' ? chatCompletionText(payload) : responseText(payload)
+      if (!text) {
+        attempts.push({ provider: target.provider, model: target.model, lane: target.lane, protocol, ok: false, reason: 'missing_output', usage })
+        continue
+      }
+
+      try {
+        const parsed = JSON.parse(text) as Record<string, unknown>
+        const successAttempt: ResolverAttempt = {
+          provider: target.provider,
+          model: target.model,
+          lane: target.lane,
+          protocol,
+          ok: true,
+          usage,
+        }
+        const completeAttempts = [...attempts, successAttempt]
+        return normalizeMeaning(parsed, statement, target, completeAttempts, usage)
+      } catch {
+        attempts.push({ provider: target.provider, model: target.model, lane: target.lane, protocol, ok: false, reason: 'invalid_json', usage })
+      }
+    } catch {
+      attempts.push({ provider: target.provider, model: target.model, lane: target.lane, protocol, ok: false, reason: 'request_failed' })
+    }
   }
+
+  return deterministicMeaning(statement, attempts)
 }
