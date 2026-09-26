@@ -51,6 +51,29 @@ Deno.serve(async (req: Request) => {
     const baseBranch = input.base_branch || 'main'
     const actionKey = `github.change:${input.repository}:${input.branch}`
     const target = `github://${input.repository}@${baseBranch}`
+
+    const { data: grants, error: grantError } = await admin
+      .from('perception_permission_grants')
+      .select('id, permission_level, expires_at')
+      .eq('user_id', userData.user.id)
+      .eq('project_id', projectId)
+      .eq('capability', 'code')
+      .eq('target', target)
+      .is('revoked_at', null)
+
+    if (grantError) throw new Error(`Permission lookup failed: ${grantError.message}`)
+
+    const rank: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3 }
+    const requestedRank = rank[input?.permission?.level] ?? -1
+    const now = Date.now()
+    const grant = (grants || []).find((candidate) => {
+      const expiry = candidate.expires_at ? new Date(candidate.expires_at).getTime() : null
+      return (rank[candidate.permission_level] ?? -1) >= requestedRank && (expiry === null || expiry > now)
+    })
+
+    if (!grant || requestedRank < 2) {
+      return json({ error: 'Active scoped P2/P3 permission grant required' }, 403)
+    }
     const record = async (phase: string, details: Record<string, unknown>, evidence: unknown[] = []) => {
       const { error } = await admin.rpc('perception_record_execution_entry_internal', {
         p_user_id: userData.user.id,
@@ -66,7 +89,7 @@ Deno.serve(async (req: Request) => {
       if (error) throw new Error(`Execution ledger write failed: ${error.message}`)
     }
 
-    await record('authorized', { dry_run: !input.execute, summary: input.summary, branch: input.branch })
+    await record('authorized', { dry_run: !input.execute, summary: input.summary, branch: input.branch, permission_grant_id: grant.id })
     if (input.execute) await record('attempted', { planned_files: input.files?.map((file: { path: string }) => file.path) || [] })
 
     const result = await executeBoundedGitHubChange(input, githubToken)
