@@ -2,6 +2,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2'
 import { governTask, routeModelTargets, type ModelPrice, type ModelProtocol, type ModelTarget } from '../_shared/token-efficiency.ts'
 import { resolveObjectiveMeaning } from '../_shared/meaning-resolver.ts'
 import { planInitialRealityRoute } from '../_shared/reality-planner.ts'
+import { routePlannedCapabilities } from '../_shared/capability-router.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -221,6 +222,10 @@ Deno.serve(async (req: Request) => {
       ) as Array<'reason' | 'research' | 'retrieve' | 'generate' | 'edit' | 'code' | 'communicate' | 'schedule' | 'calculate' | 'verify'>,
     })
 
+    const capabilityRouting = routePlannedCapabilities(routePlan.nodes, {
+      githubOperatorAttached: operatorCapabilities.includes('code'),
+    })
+
     let runtimeData: unknown
     let runtimeError: { code?: string; message?: string } | null = null
 
@@ -268,10 +273,47 @@ Deno.serve(async (req: Request) => {
     const projectId = typeof runtimeResult.project_id === 'string' ? runtimeResult.project_id : null
     const objectiveId = typeof runtimeResult.objective_id === 'string' ? runtimeResult.objective_id : null
     const routeId = typeof runtimeResult.route_id === 'string' ? runtimeResult.route_id : null
+    const continuationRouteId = typeof runtimeResult.continuation_route_id === 'string'
+      ? runtimeResult.continuation_route_id
+      : null
+    const activeRouteId = continuationRouteId ?? routeId
 
     const usageEvidence: Array<Record<string, unknown>> = []
 
     if (projectId) {
+      for (const decision of capabilityRouting.filter((candidate) => candidate.executionMode === 'external')) {
+        const { error: intentError } = await admin.from('perception_execution_ledger').insert({
+          user_id: userData.user.id,
+          project_id: projectId,
+          objective_id: objectiveId,
+          route_id: activeRouteId,
+          route_node_id: null,
+          worker_run_id: null,
+          action_key: `capability_route:${objectiveId ?? crypto.randomUUID()}:${decision.nodeKey}`,
+          phase: 'intended',
+          permission_level: decision.permissionLevel,
+          capability: decision.capability,
+          target: null,
+          details: {
+            adapter: decision.adapter,
+            routing_status: decision.status,
+            execution_mode: decision.executionMode,
+            permission_required: decision.permissionRequired,
+            required_input_fields: decision.requiredInputFields,
+            blockers: decision.blockers,
+          },
+          evidence: [],
+        })
+
+        if (intentError) {
+          console.error('Perception capability-routing ledger telemetry failed', {
+            code: intentError.code,
+            message: intentError.message,
+            node_key: decision.nodeKey,
+          })
+        }
+      }
+
       const baseDecision = {
         user_id: userData.user.id,
         project_id: projectId,
@@ -391,6 +433,7 @@ Deno.serve(async (req: Request) => {
       ...runtimeResult,
       meaning,
       route_plan: routePlan,
+      capability_routing: capabilityRouting,
       token_control: {
         enabled: costControlEnabled,
         budget_tier: tokenDecision.tier,
