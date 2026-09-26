@@ -309,7 +309,10 @@ export type GitHubActionContract = {
   base_branch: string
   working_branch: string
   desired_changes: string
-  files_or_patch: unknown
+  files_or_patch:
+    | { kind: 'files'; files: Array<{ path: string; content: string }> }
+    | { kind: 'patch'; patch: string }
+    | null
   tests: string[]
   permission: {
     required: boolean
@@ -670,7 +673,7 @@ type GitHubOperatorResponse = {
 export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfTestResult> {
   const client = requireBackend()
   const objective = await submitObjective(
-    'Change the Perception GitHub repository on a bounded branch, verify the external effect independently, and update Project World without changing main.',
+    'Create docs/OPERATOR_LIVE_PROOF.md in the Perception GitHub repository on a bounded branch with a short non-secret proof message that says the P1 materializer planned this change. Verify the external effect independently and update Project World without changing main.',
   )
   if (!objective.ok || !objective.project_id) {
     throw new Error(objective.stage || 'Could not create the Operator self-test Project World.')
@@ -706,26 +709,22 @@ export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfT
   if (grantError) throw grantError
   if (!grantId) throw new Error('Perception could not create the temporary Operator permission grant.')
 
-  const proofContent = [
-    '# Perception Operator Live Proof',
-    '',
-    'This file was created by the Perception GitHub Operator on a bounded branch.',
-    '',
-    `Project World: ${projectId}`,
-    `Action contract: ${contract.action_key}`,
-    `Branch: ${branch}`,
-    `Observed at: ${new Date().toISOString()}`,
-    '',
-    'Invariant: main is not modified by this proof.',
-    '',
-  ].join('\n')
+  const plannedFiles = contract.files_or_patch?.kind === 'files'
+    ? contract.files_or_patch.files
+    : []
+
+  if (plannedFiles.length !== 1 || plannedFiles[0]?.path !== 'docs/OPERATOR_LIVE_PROOF.md') {
+    throw new Error(
+      'The P1 code-plan materializer did not produce the exact bounded Operator proof file; execution is blocked.',
+    )
+  }
 
   const body = {
     repository,
     base_branch: baseBranch,
     branch,
     summary: contract.desired_changes || 'Perception live operator proof',
-    files: [{ path: 'docs/OPERATOR_LIVE_PROOF.md', content: proofContent }],
+    files: plannedFiles,
     permission: {
       project_id: projectId,
       capability: 'code' as const,

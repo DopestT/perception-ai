@@ -4,6 +4,7 @@ import { resolveObjectiveMeaning } from '../_shared/meaning-resolver.ts'
 import { planInitialRealityRoute } from '../_shared/reality-planner.ts'
 import { routePlannedCapabilities } from '../_shared/capability-router.ts'
 import { buildGitHubActionContract, repositoryFromGitHubLocator } from '../_shared/action-contract.ts'
+import { materializeGitHubCodePlan, type GitHubCodePlanResult } from '../_shared/code-plan-materializer.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -227,6 +228,24 @@ Deno.serve(async (req: Request) => {
       githubOperatorAttached: operatorCapabilities.includes('code'),
     })
 
+    const hasGitHubCodeRoute = capabilityRouting.some((decision) => decision.adapter === 'github-operator')
+    const githubReadToken = (
+      Deno.env.get('PERCEPTION_GITHUB_TOKEN')
+      || Deno.env.get('PERCEPTION_OPERATOR_TOKEN')
+      || ''
+    ).trim()
+    const codePlanDecision = hasGitHubCodeRoute
+      ? governTask({ statement: meaning.desired_reality, capability: 'code', risk: 'medium' })
+      : null
+    const codePlanModelRoute = codePlanDecision
+      ? routeModelTargets(codePlanDecision, configuredTargets, {
+          risk: 'medium',
+          mechanicallyVerifiable: true,
+          costControlEnabled,
+          budgetPressure,
+        })
+      : null
+
     let runtimeData: unknown
     let runtimeError: { code?: string; message?: string } | null = null
 
@@ -330,7 +349,33 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    let persistedCodeRouteNodes: Array<{
+      id: string
+      label: string
+      outcome: string
+      permission_level: string
+    }> = []
+
+    if (projectId && activeRouteId && hasGitHubCodeRoute) {
+      const { data: codeNodes, error: codeNodesError } = await admin
+        .from('perception_route_nodes')
+        .select('id, label, outcome, permission_level')
+        .eq('project_id', projectId)
+        .eq('route_id', activeRouteId)
+        .eq('capability', 'code')
+
+      if (codeNodesError) {
+        console.error('Perception code-plan route-node lookup failed', {
+          code: codeNodesError.code,
+          message: codeNodesError.message,
+        })
+      } else {
+        persistedCodeRouteNodes = (codeNodes ?? []) as typeof persistedCodeRouteNodes
+      }
+    }
+
     const actionContracts: Array<ReturnType<typeof buildGitHubActionContract>> = []
+    const codePlanMaterializations: Array<Record<string, unknown>> = []
     const usageEvidence: Array<Record<string, unknown>> = []
 
     if (projectId) {
@@ -347,6 +392,258 @@ Deno.serve(async (req: Request) => {
             routeId: activeRouteId,
             repository: boundGitHubRepository,
           })
+
+          let filesOrPatch: Parameters<typeof buildGitHubActionContract>[0]['filesOrPatch'] = null
+          let materializedTests: string[] = []
+          let materializerResult: GitHubCodePlanResult | null = null
+          const persistedRouteNode = persistedCodeRouteNodes.find((candidate) =>
+            candidate.label === routeNode.label && candidate.outcome === routeNode.outcome
+          ) ?? persistedCodeRouteNodes.find((candidate) => candidate.label === routeNode.label)
+            ?? persistedCodeRouteNodes[0]
+            ?? null
+
+          const prerequisiteFailures = [
+            ...(!boundGitHubRepository ? ['No bound GitHub repository is available in Project World.'] : []),
+            ...(!persistedRouteNode ? ['The persisted code route node could not be resolved.'] : []),
+            ...(!githubReadToken ? ['The server-side GitHub read credential is unavailable.'] : []),
+            ...(!codePlanDecision || !codePlanModelRoute?.candidates.length
+              ? ['No code-planning model route is available.']
+              : []),
+          ]
+
+          if (prerequisiteFailures.length === 0 && boundGitHubRepository && persistedRouteNode && codePlanDecision && codePlanModelRoute) {
+            const startedAt = new Date().toISOString()
+            const { data: worker, error: workerError } = await admin
+              .from('perception_worker_runs')
+              .insert({
+                user_id: userData.user.id,
+                project_id: projectId,
+                route_node_id: persistedRouteNode.id,
+                worker_key: 'github_code_plan_materializer_v1',
+                capability: 'code',
+                permission_level: 'P1',
+                status: 'running',
+                input: {
+                  repository: boundGitHubRepository,
+                  base_branch: draftContract.base_branch,
+                  desired_changes: routeNode.outcome,
+                  completion_tests: routeNode.completionTests,
+                },
+                evidence: [],
+                started_at: startedAt,
+              })
+              .select('id')
+              .single()
+
+            if (workerError || !worker?.id) {
+              prerequisiteFailures.push(
+                `Could not persist the P1 code-plan worker: ${workerError?.message || 'unknown error'}`,
+              )
+            } else {
+              materializerResult = await materializeGitHubCodePlan({
+                repository: boundGitHubRepository,
+                baseBranch: draftContract.base_branch,
+                desiredChanges: routeNode.outcome,
+                completionTests: routeNode.completionTests.map((test) => test.description),
+                githubToken: githubReadToken,
+                candidates: codePlanModelRoute.candidates,
+                maxOutputTokens: codePlanDecision.maxOutputTokens,
+              })
+
+              codePlanMaterializations.push({
+                node_key: decision.nodeKey,
+                worker_run_id: worker.id,
+                ...materializerResult,
+              })
+
+              const deepestPrice = configuredTargets
+                .filter((target) => target.lane === 'deep' && target.price)
+                .map((target) => target.price)[0]
+
+              for (const attempt of materializerResult.attempts) {
+                if (!attempt.usage) continue
+                const matchedTarget = configuredTargets.find(
+                  (target) => target.provider === attempt.provider && target.model === attempt.model,
+                )
+                const estimatedCostUsd = estimateCost(attempt.usage, matchedTarget?.price)
+                const baselineCostUsd = estimateCost(attempt.usage, deepestPrice) || estimatedCostUsd
+
+                const usageCall = await admin.rpc('perception_record_token_usage_internal', {
+                  p_user_id: userData.user.id,
+                  p_project_id: projectId,
+                  p_objective_id: objectiveId,
+                  p_worker_run_id: worker.id,
+                  p_capability: 'code',
+                  p_task_kind: `code_plan_${attempt.stage}`,
+                  p_provider: attempt.provider,
+                  p_model: attempt.model,
+                  p_budget_tier: codePlanDecision.tier,
+                  p_input_tokens: attempt.usage.inputTokens,
+                  p_cached_input_tokens: attempt.usage.cachedInputTokens,
+                  p_output_tokens: attempt.usage.outputTokens,
+                  p_reasoning_tokens: attempt.usage.reasoningTokens,
+                  p_max_output_tokens: codePlanDecision.maxOutputTokens,
+                  p_estimated_cost_usd: estimatedCostUsd,
+                  p_baseline_cost_usd: baselineCostUsd,
+                  p_request_id: null,
+                  p_metadata: {
+                    ok: attempt.ok,
+                    reason: attempt.reason ?? null,
+                    stage: attempt.stage,
+                    protocol: attempt.protocol,
+                    routing_strategy: 'verified-cheapest-first',
+                  },
+                })
+
+                if (usageCall.error) {
+                  console.error('Perception code-plan token telemetry failed', {
+                    code: usageCall.error.code,
+                    message: usageCall.error.message,
+                  })
+                }
+              }
+
+              if (materializerResult.ok) {
+                const artifactPayload = {
+                  version: 'github.code-plan.v1',
+                  repository: materializerResult.repository,
+                  base_branch: materializerResult.base_branch,
+                  base_sha: materializerResult.base_sha,
+                  tree_sha: materializerResult.tree_sha,
+                  read_paths: materializerResult.read_paths,
+                  write_paths: materializerResult.write_paths,
+                  files: materializerResult.files,
+                  tests: materializerResult.tests,
+                  rationale: materializerResult.rationale,
+                  confidence: materializerResult.confidence,
+                }
+
+                const { data: artifact, error: artifactError } = await admin
+                  .from('perception_artifacts')
+                  .insert({
+                    user_id: userData.user.id,
+                    project_id: projectId,
+                    objective_id: objectiveId,
+                    route_node_id: persistedRouteNode.id,
+                    artifact_type: 'github_code_plan',
+                    title: `Code plan: ${routeNode.label}`,
+                    content: JSON.stringify(artifactPayload, null, 2),
+                    metadata: {
+                      worker_key: 'github_code_plan_materializer_v1',
+                      repository: materializerResult.repository,
+                      base_sha: materializerResult.base_sha,
+                      tree_sha: materializerResult.tree_sha,
+                      read_paths: materializerResult.read_paths,
+                      write_paths: materializerResult.write_paths,
+                      confidence: materializerResult.confidence,
+                    },
+                  })
+                  .select('id')
+                  .single()
+
+                if (!artifactError && artifact?.id) {
+                  const verificationEvidence = [
+                    ...materializerResult.evidence,
+                    {
+                      kind: 'scope_verification',
+                      expected_write_paths: materializerResult.write_paths,
+                      generated_write_paths: materializerResult.files.map((file) => file.path),
+                    },
+                  ]
+
+                  const { error: verificationError } = await admin
+                    .from('perception_verification_runs')
+                    .insert({
+                      user_id: userData.user.id,
+                      project_id: projectId,
+                      route_node_id: persistedRouteNode.id,
+                      worker_run_id: worker.id,
+                      passed: true,
+                      evidence: verificationEvidence,
+                      details: {
+                        kind: 'github_code_plan_materialization',
+                        repository: materializerResult.repository,
+                        base_sha: materializerResult.base_sha,
+                        file_count: materializerResult.files.length,
+                        tests: materializerResult.tests,
+                      },
+                    })
+
+                  if (!verificationError) {
+                    await admin
+                      .from('perception_worker_runs')
+                      .update({
+                        status: 'succeeded',
+                        output_artifact_id: artifact.id,
+                        evidence: verificationEvidence,
+                        finished_at: new Date().toISOString(),
+                      })
+                      .eq('id', worker.id)
+
+                    filesOrPatch = {
+                      kind: 'files',
+                      files: materializerResult.files.map((file) => ({
+                        path: file.path,
+                        content: file.content,
+                      })),
+                    }
+                    materializedTests = materializerResult.tests
+                  } else {
+                    prerequisiteFailures.push(
+                      `Code-plan verification could not be persisted: ${verificationError.message}`,
+                    )
+                  }
+                } else {
+                  prerequisiteFailures.push(
+                    `Code-plan artifact could not be persisted: ${artifactError?.message || 'unknown error'}`,
+                  )
+                }
+              } else {
+                const verificationEvidence = [
+                  ...materializerResult.evidence,
+                  ...materializerResult.failures.map((failure) => ({ kind: 'failure', failure })),
+                ]
+                await admin
+                  .from('perception_verification_runs')
+                  .insert({
+                    user_id: userData.user.id,
+                    project_id: projectId,
+                    route_node_id: persistedRouteNode.id,
+                    worker_run_id: worker.id,
+                    passed: false,
+                    evidence: verificationEvidence,
+                    details: {
+                      kind: 'github_code_plan_materialization',
+                      failures: materializerResult.failures,
+                    },
+                  })
+                prerequisiteFailures.push(...materializerResult.failures)
+              }
+
+              if (!filesOrPatch) {
+                await admin
+                  .from('perception_worker_runs')
+                  .update({
+                    status: 'failed',
+                    evidence: [
+                      ...(materializerResult?.evidence ?? []),
+                      ...prerequisiteFailures.map((failure) => ({ kind: 'failure', failure })),
+                    ],
+                    finished_at: new Date().toISOString(),
+                  })
+                  .eq('id', worker.id)
+              }
+            }
+          }
+
+          if (prerequisiteFailures.length > 0 && !materializerResult) {
+            codePlanMaterializations.push({
+              node_key: decision.nodeKey,
+              ok: false,
+              phase: 'blocked',
+              failures: prerequisiteFailures,
+            })
+          }
 
           let permissionGrantId: string | null = null
           if (draftContract.target && decision.permissionRequired) {
@@ -384,6 +681,8 @@ Deno.serve(async (req: Request) => {
             objectiveId,
             routeId: activeRouteId,
             repository: boundGitHubRepository,
+            filesOrPatch,
+            tests: materializedTests,
             permissionGrantId,
           })
           actionContracts.push(actionContract)
@@ -544,6 +843,7 @@ Deno.serve(async (req: Request) => {
       route_plan: routePlan,
       capability_routing: capabilityRouting,
       action_contracts: actionContracts,
+      code_plan_materializations: codePlanMaterializations,
       token_control: {
         enabled: costControlEnabled,
         budget_tier: tokenDecision.tier,
