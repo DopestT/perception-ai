@@ -98,6 +98,7 @@ export function buildGitHubActionContract(input: {
   repository?: string | null
   baseBranch?: string
   filesOrPatch?: GitHubFilesOrPatch | null
+  tests?: string[]
   permissionGrantId?: string | null
 }): GitHubActionContract {
   const baseBranch = input.baseBranch?.trim() || 'main'
@@ -143,7 +144,9 @@ export function buildGitHubActionContract(input: {
     working_branch: workingBranch,
     desired_changes: input.node.outcome,
     files_or_patch: filesOrPatch,
-    tests: input.node.completionTests.map((test) => test.description),
+    tests: input.tests?.length
+      ? Array.from(new Set(input.tests.map((test) => test.trim()).filter(Boolean))).slice(0, 12)
+      : input.node.completionTests.map((test) => test.description),
     permission: {
       required: permissionRequired,
       level: input.node.permissionLevel,
