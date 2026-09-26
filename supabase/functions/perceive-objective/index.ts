@@ -290,7 +290,7 @@ Deno.serve(async (req: Request) => {
           route_node_id: null,
           worker_run_id: null,
           action_key: `capability_route:${objectiveId ?? crypto.randomUUID()}:${decision.nodeKey}`,
-          phase: 'intended',
+          phase: decision.status === 'blocked' ? 'blocked' : 'intended',
           permission_level: decision.permissionLevel,
           capability: decision.capability,
           target: null,
