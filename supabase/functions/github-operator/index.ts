@@ -75,6 +75,22 @@ Deno.serve(async (req: Request) => {
       await record('observed', { branch: result.branch, commit_sha: result.commit_sha, changed_files: result.changed_files }, result.evidence || [])
       if (result.ok) {
         await record('verified', { branch: result.branch, commit_sha: result.commit_sha, changed_files: result.changed_files }, result.evidence || [])
+
+        const verifiedReality = [
+          `Verified GitHub change on ${input.repository}.`,
+          `Branch: ${result.branch}.`,
+          result.commit_sha ? `Commit: ${result.commit_sha}.` : '',
+          result.changed_files?.length ? `Changed: ${result.changed_files.join(', ')}.` : '',
+        ].filter(Boolean).join(' ')
+
+        const { error: worldError } = await admin.rpc('perception_apply_verified_operator_effect_internal', {
+          p_user_id: userData.user.id,
+          p_project_id: projectId,
+          p_action_key: actionKey,
+          p_summary: verifiedReality,
+          p_evidence: result.evidence || [],
+        })
+        if (worldError) throw new Error(`Project World verified-effect update failed: ${worldError.message}`)
       }
     } else if (!result.ok) {
       await record(result.phase === 'blocked' ? 'blocked' : 'failed', { failures: result.failures || result.unexpected_files || [] })
