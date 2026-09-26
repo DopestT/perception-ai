@@ -209,12 +209,18 @@ function extensionOf(path: string): string {
   return dot > 0 ? filename.slice(dot).toLowerCase() : ''
 }
 
+export function isSafeRepositoryPath(path: string): boolean {
+  if (!path.trim() || path.startsWith('/') || path.includes('\\\\') || path.includes('\\0')) return false
+  const segments = path.split('/')
+  return !segments.some((segment) => !segment || segment === '..' || segment === '.')
+}
+
 export function isSensitiveRepositoryPath(path: string): boolean {
   return sensitivePathPatterns.some((pattern) => pattern.test(path))
 }
 
 export function isCandidateRepositoryPath(path: string): boolean {
-  if (!pathPattern.test(path)) return false
+  if (!isSafeRepositoryPath(path)) return false
   const segments = path.split('/')
   if (segments.some((segment) => ignoredSegments.has(segment))) return false
   if (ignoredFiles.has(segments.at(-1) || '')) return false
@@ -225,6 +231,9 @@ export function isCandidateRepositoryPath(path: string): boolean {
 
   const filename = segments.at(-1) || ''
   return [
+    '.dockerignore',
+    '.editorconfig',
+    '.gitignore',
     'Dockerfile',
     'Makefile',
     'Procfile',
@@ -289,7 +298,7 @@ export function validateScopeSelection(
   }
 
   for (const path of selection.write_paths) {
-    if (!pathPattern.test(path)) failures.push(`Write path is invalid: ${path}`)
+    if (!isCandidateRepositoryPath(path)) failures.push(`Write path is not safe text scope: ${path}`)
     if (isSensitiveRepositoryPath(path)) failures.push(`Write path requires a consequential execution path: ${path}`)
     if (existingPaths.has(path) && !read.has(path)) {
       failures.push(`Existing write path must also be read from the base tree: ${path}`)
@@ -313,7 +322,7 @@ export function validateGeneratedFiles(
     if (seen.has(file.path)) failures.push(`Duplicate generated file: ${file.path}`)
     seen.add(file.path)
     if (!allowed.has(file.path)) failures.push(`Generated file is outside the selected write scope: ${file.path}`)
-    if (!pathPattern.test(file.path) || isSensitiveRepositoryPath(file.path)) {
+    if (!isCandidateRepositoryPath(file.path) || isSensitiveRepositoryPath(file.path)) {
       failures.push(`Generated file path is unsafe: ${file.path}`)
     }
     if (!file.content.length) failures.push(`Generated file content is empty: ${file.path}`)
