@@ -70,7 +70,7 @@ Deno.serve(async (req: Request) => {
     })
 
     const runtimeCapabilities = ['reason', 'generate', 'verify'] as const
-    const operatorCapabilities = (Deno.env.get('PERCEPTION_OPERATOR_CAPABILITIES') ?? '')
+    const operatorCapabilities = ((Deno.env.get('PERCEPTION_OPERATOR_CAPABILITIES') || Deno.env.get('PERCEPTION_OPERATOR_CAPIBILITIES')) ?? '')
       .split(',')
       .map((value) => value.trim())
       .filter((value) => value.length > 0)
