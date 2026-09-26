@@ -9,6 +9,7 @@ export type ActionContractSourceContext = {
   enabled: boolean
   defaultBranch?: string | null
   observedAt?: string | null
+  freshnessSlaMinutes?: number | null
 }
 
 export type PlannedGitHubFile = {
@@ -40,7 +41,7 @@ export type ActionContractResolution = {
   completionTests: PlannedRouteNode['completionTests']
   provenance: {
     repository: 'observed' | 'unresolved'
-    baseBranch: 'observed' | 'unresolved'
+    baseBranch: 'observed' | 'stale' | 'unresolved'
     workingBranch: 'generated' | 'unresolved'
     files: 'provided' | 'unresolved'
   }
@@ -55,6 +56,7 @@ export type ResolveActionContractInput = {
   sources?: ActionContractSourceContext[]
   files?: PlannedGitHubFile[]
   permissionGranted?: boolean
+  now?: Date
 }
 
 const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
@@ -146,7 +148,21 @@ export function resolveActionContract(input: ResolveActionContractInput): Action
 
   const source = sourceSelection.source
   const repository = source?.externalId || null
-  const baseBranch = source?.defaultBranch?.trim() || null
+  const observedBaseBranch = source?.defaultBranch?.trim() || null
+  const observedAtMs = source?.observedAt ? Date.parse(source.observedAt) : Number.NaN
+  const freshnessMinutes = Number(source?.freshnessSlaMinutes ?? 1440)
+  const freshnessMs = Number.isFinite(freshnessMinutes) && freshnessMinutes > 0
+    ? freshnessMinutes * 60_000
+    : 1440 * 60_000
+  const nowMs = (input.now ?? new Date()).getTime()
+  const branchEvidenceFresh = Boolean(
+    observedBaseBranch
+    && Number.isFinite(observedAtMs)
+    && observedAtMs <= nowMs
+    && nowMs - observedAtMs <= freshnessMs
+  )
+  const baseBranch = branchEvidenceFresh ? observedBaseBranch : null
+  const staleBaseBranch = Boolean(observedBaseBranch && !branchEvidenceFresh)
   const files = (input.files ?? []).filter((file) => file.path.trim() && typeof file.content === 'string')
 
   const missingFields: string[] = []
@@ -163,12 +179,14 @@ export function resolveActionContract(input: ResolveActionContractInput): Action
         field === 'repository'
           ? 'No unique observed GitHub repository is bound to this Project World.'
           : field === 'base_branch'
-            ? 'The repository base branch has not been observed in Project World evidence.'
+            ? staleBaseBranch
+              ? 'The observed repository base branch is stale and must be refreshed before execution.'
+              : 'The repository base branch has not been observed in Project World evidence.'
             : 'No exact planned file payload is available for this route node.'
       ),
       provenance: {
         repository: repository ? 'observed' : 'unresolved',
-        baseBranch: baseBranch ? 'observed' : 'unresolved',
+        baseBranch: baseBranch ? 'observed' : staleBaseBranch ? 'stale' : 'unresolved',
         workingBranch: repository && baseBranch ? 'generated' : 'unresolved',
         files: files.length ? 'provided' : 'unresolved',
       },
