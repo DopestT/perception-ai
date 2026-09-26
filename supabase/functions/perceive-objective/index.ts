@@ -316,7 +316,7 @@ Deno.serve(async (req: Request) => {
           const [{ data: sources, error: sourcesError }, { data: observations, error: observationsError }] = await Promise.all([
             admin
               .from('perception_sources')
-              .select('id, source_type, provider, external_id, enabled, metadata, last_observed_at')
+              .select('id, source_type, provider, external_id, enabled, metadata, last_observed_at, freshness_sla_minutes')
               .in('id', sourceIds),
             admin
               .from('perception_source_observations')
@@ -370,6 +370,7 @@ Deno.serve(async (req: Request) => {
                 enabled: source.enabled !== false,
                 defaultBranch: metadataDefault || observedDefault,
                 observedAt: observation?.observed_at || source.last_observed_at || null,
+                freshnessSlaMinutes: Number(source.freshness_sla_minutes ?? 1440) || 1440,
               }
             })
           }
