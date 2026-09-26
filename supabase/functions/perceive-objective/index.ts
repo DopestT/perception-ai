@@ -3,6 +3,7 @@ import { governTask, routeModelTargets, type ModelPrice, type ModelProtocol, typ
 import { resolveObjectiveMeaning } from '../_shared/meaning-resolver.ts'
 import { planInitialRealityRoute } from '../_shared/reality-planner.ts'
 import { routePlannedCapabilities } from '../_shared/capability-router.ts'
+import { resolveActionContract, type ActionContractSourceContext, type PlannedGitHubFile } from '../_shared/action-contract-resolver.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -139,8 +140,20 @@ Deno.serve(async (req: Request) => {
     const { data: userData, error: userError } = await userClient.auth.getUser(token)
     if (userError || !userData.user) return json({ error: 'Invalid session' }, 401)
 
-    const payload = await req.json().catch(() => null) as { statement?: unknown } | null
+    const payload = await req.json().catch(() => null) as {
+      statement?: unknown
+      execution?: { files?: unknown }
+    } | null
     const statement = typeof payload?.statement === 'string' ? payload.statement.trim() : ''
+    const executionFiles: PlannedGitHubFile[] = Array.isArray(payload?.execution?.files)
+      ? payload.execution.files.flatMap((candidate) => {
+          if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return []
+          const value = candidate as Record<string, unknown>
+          if (typeof value.path !== 'string' || typeof value.content !== 'string') return []
+          const path = value.path.trim()
+          return path ? [{ path, content: value.content }] : []
+        })
+      : []
     if (statement.length < 3) return json({ error: 'Objective must contain at least 3 characters' }, 400)
     if (statement.length > 10000) return json({ error: 'Objective is too long' }, 413)
 
@@ -278,10 +291,164 @@ Deno.serve(async (req: Request) => {
       : null
     const activeRouteId = continuationRouteId ?? routeId
 
+    const actionContractResolutions: Array<Record<string, unknown>> = []
     const usageEvidence: Array<Record<string, unknown>> = []
 
     if (projectId) {
+      const { data: sourceBindings, error: sourceBindingError } = await admin
+        .from('perception_project_source_bindings')
+        .select('source_id, relationship, active')
+        .eq('project_id', projectId)
+        .eq('active', true)
+
+      let actionSources: ActionContractSourceContext[] = []
+      if (sourceBindingError) {
+        console.error('Perception action-contract source lookup failed', {
+          code: sourceBindingError.code,
+          message: sourceBindingError.message,
+        })
+      } else {
+        const sourceIds = (sourceBindings ?? [])
+          .map((binding) => typeof binding.source_id === 'string' ? binding.source_id : null)
+          .filter((sourceId): sourceId is string => Boolean(sourceId))
+
+        if (sourceIds.length > 0) {
+          const [{ data: sources, error: sourcesError }, { data: observations, error: observationsError }] = await Promise.all([
+            admin
+              .from('perception_sources')
+              .select('id, source_type, provider, external_id, enabled, metadata, last_observed_at')
+              .in('id', sourceIds),
+            admin
+              .from('perception_source_observations')
+              .select('source_id, payload, observed_at')
+              .in('source_id', sourceIds)
+              .order('observed_at', { ascending: false })
+              .limit(100),
+          ])
+
+          if (sourcesError) {
+            console.error('Perception action-contract sources unavailable', {
+              code: sourcesError.code,
+              message: sourcesError.message,
+            })
+          } else {
+            if (observationsError) {
+              console.error('Perception action-contract observations unavailable', {
+                code: observationsError.code,
+                message: observationsError.message,
+              })
+            }
+
+            const relationshipBySource = new Map(
+              (sourceBindings ?? []).map((binding) => [binding.source_id, binding.relationship]),
+            )
+
+            actionSources = (sources ?? []).map((source) => {
+              const metadata = source.metadata && typeof source.metadata === 'object' && !Array.isArray(source.metadata)
+                ? source.metadata as Record<string, unknown>
+                : {}
+              const observation = (observations ?? []).find((candidate) => candidate.source_id === source.id)
+              const observationPayload = observation?.payload && typeof observation.payload === 'object' && !Array.isArray(observation.payload)
+                ? observation.payload as Record<string, unknown>
+                : {}
+              const metadataDefault = typeof metadata.default_branch === 'string'
+                ? metadata.default_branch
+                : typeof metadata.defaultBranch === 'string'
+                  ? metadata.defaultBranch
+                  : null
+              const observedDefault = typeof observationPayload.default_branch === 'string'
+                ? observationPayload.default_branch
+                : typeof observationPayload.defaultBranch === 'string'
+                  ? observationPayload.defaultBranch
+                  : null
+
+              return {
+                sourceType: String(source.source_type ?? ''),
+                provider: String(source.provider ?? ''),
+                externalId: String(source.external_id ?? ''),
+                relationship: String(relationshipBySource.get(source.id) ?? 'unknown'),
+                enabled: source.enabled !== false,
+                defaultBranch: metadataDefault || observedDefault,
+                observedAt: observation?.observed_at || source.last_observed_at || null,
+              }
+            })
+          }
+        }
+      }
+
       for (const decision of capabilityRouting.filter((candidate) => candidate.executionMode === 'external')) {
+        const node = routePlan.nodes.find((candidate) => candidate.key === decision.nodeKey)
+        let resolution = node
+          ? resolveActionContract({
+              decision,
+              node,
+              projectId,
+              objectiveId,
+              routeId: activeRouteId,
+              sources: actionSources,
+              files: executionFiles,
+              permissionGranted: false,
+            })
+          : null
+
+        if (resolution?.contract) {
+          const { data: grants, error: grantError } = await admin
+            .from('perception_permission_grants')
+            .select('permission_level, expires_at')
+            .eq('user_id', userData.user.id)
+            .eq('project_id', projectId)
+            .eq('capability', 'code')
+            .eq('target', resolution.contract.permission.target)
+            .is('revoked_at', null)
+
+          if (grantError) {
+            console.error('Perception action-contract permission lookup failed', {
+              code: grantError.code,
+              message: grantError.message,
+            })
+          } else {
+            const now = Date.now()
+            const permissionGranted = (grants ?? []).some((grant) => {
+              const expiry = grant.expires_at ? new Date(grant.expires_at).getTime() : null
+              return ['P2', 'P3'].includes(String(grant.permission_level))
+                && (expiry === null || expiry > now)
+            })
+
+            if (permissionGranted && node) {
+              resolution = resolveActionContract({
+                decision,
+                node,
+                projectId,
+                objectiveId,
+                routeId: activeRouteId,
+                sources: actionSources,
+                files: executionFiles,
+                permissionGranted: true,
+              })
+            }
+          }
+        }
+
+        if (resolution) {
+          actionContractResolutions.push({
+            node_key: decision.nodeKey,
+            adapter: resolution.adapter,
+            status: resolution.status,
+            contract: resolution.contract,
+            missing_fields: resolution.missingFields,
+            blockers: resolution.blockers,
+            idempotency_key: resolution.idempotencyKey,
+            completion_tests: resolution.completionTests,
+            provenance: resolution.provenance,
+          })
+        }
+
+        const routingStatus = resolution?.status ?? decision.status
+        const routingBlockers = resolution?.blockers ?? decision.blockers
+        const target = resolution?.contract?.permission.target ?? null
+        const actionKey = resolution?.idempotencyKey
+          ?? `capability_route:${objectiveId ?? crypto.randomUUID()}:${decision.nodeKey}`
+
         const { error: intentError } = await admin.from('perception_execution_ledger').insert({
           user_id: userData.user.id,
           project_id: projectId,
@@ -289,18 +456,22 @@ Deno.serve(async (req: Request) => {
           route_id: activeRouteId,
           route_node_id: null,
           worker_run_id: null,
-          action_key: `capability_route:${objectiveId ?? crypto.randomUUID()}:${decision.nodeKey}`,
-          phase: decision.status === 'blocked' ? 'blocked' : 'intended',
+          action_key: actionKey,
+          phase: routingStatus === 'blocked' ? 'blocked' : 'intended',
           permission_level: decision.permissionLevel,
           capability: decision.capability,
-          target: null,
+          target,
           details: {
             adapter: decision.adapter,
-            routing_status: decision.status,
+            routing_status: routingStatus,
             execution_mode: decision.executionMode,
             permission_required: decision.permissionRequired,
             required_input_fields: decision.requiredInputFields,
-            blockers: decision.blockers,
+            blockers: routingBlockers,
+            action_contract: resolution?.contract ?? null,
+            action_contract_missing_fields: resolution?.missingFields ?? [],
+            action_contract_provenance: resolution?.provenance ?? null,
+            completion_tests: resolution?.completionTests ?? [],
           },
           evidence: [],
         })
@@ -434,6 +605,7 @@ Deno.serve(async (req: Request) => {
       meaning,
       route_plan: routePlan,
       capability_routing: capabilityRouting,
+      action_contracts: actionContractResolutions,
       token_control: {
         enabled: costControlEnabled,
         budget_tier: tokenDecision.tier,
