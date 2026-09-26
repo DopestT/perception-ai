@@ -16,6 +16,7 @@ import {
   requestEmailSignIn,
   resolveForecast,
   runAutonomousForecast,
+  runPerceptionGitHubSelfTest,
   signOut,
   submitObjective,
   supabase,
@@ -133,6 +134,7 @@ function App() {
   const [resolvingForecast, setResolvingForecast] = useState(false)
   const [attachingMarket, setAttachingMarket] = useState(false)
   const [runningIntelligence, setRunningIntelligence] = useState(false)
+  const [runningOperatorTest, setRunningOperatorTest] = useState(false)
   const [marketNote, setMarketNote] = useState('')
   const [intelligenceNote, setIntelligenceNote] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
@@ -405,6 +407,39 @@ function App() {
     }
   }
 
+  const handleOperatorSelfTest = async () => {
+    if (runningOperatorTest || busy) return
+    setRunningOperatorTest(true)
+    setBusy(true)
+    setError('')
+    setNotice('Running Perception\'s bounded GitHub self-test…')
+    setPortalMode('charging')
+
+    try {
+      const result = await runPerceptionGitHubSelfTest()
+      const [nextWorld, nextLedgers] = await Promise.all([
+        getProjectWorld(result.project_id),
+        getProjectLedgers(result.project_id),
+      ])
+      setRuntimeResult(null)
+      setWorld(nextWorld)
+      setLedgers(nextLedgers)
+      setPortalMode('transitioning')
+      await delay(420)
+      setPortalMode('idle')
+      const commit = result.commit_sha ? result.commit_sha.slice(0, 8) : 'observed commit'
+      setNotice(`Operator proof verified: ${commit} on ${result.branch}. main was not modified.`)
+      window.setTimeout(() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+    } catch (cause) {
+      setPortalMode('focused')
+      setError(cause instanceof Error ? cause.message : 'Perception could not complete the GitHub self-test.')
+      setNotice('')
+    } finally {
+      setRunningOperatorTest(false)
+      setBusy(false)
+    }
+  }
+
   const logout = async () => {
     setError('')
     try {
@@ -457,6 +492,9 @@ function App() {
         </button>
         {session ? (
           <div className="account-actions">
+            <button className="quiet-action" type="button" onClick={handleOperatorSelfTest} disabled={runningOperatorTest || busy}>
+              {runningOperatorTest ? 'OPERATOR RUNNING…' : 'RUN OPERATOR PROOF'}
+            </button>
             <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth' })}>PROJECT WORLD</button>
             <button className="icon-action" type="button" onClick={logout} aria-label="Sign out"><LogOut size={15} /></button>
           </div>
