@@ -36,6 +36,7 @@ const primarySource = {
   enabled: true,
   defaultBranch: 'main',
   observedAt: '2026-09-26T12:00:00Z',
+  freshnessSlaMinutes: 1440,
 }
 
 const files = [{ path: 'docs/SAFE_PROOF.md', content: '# Safe proof\n' }]
@@ -95,6 +96,26 @@ describe('Action Contract Resolver', () => {
     expect(result.status).toBe('needs_input')
     expect(result.missingFields).toContain('files')
     expect(result.contract).toBeNull()
+  })
+
+  it('rejects stale default-branch evidence until the source is refreshed', () => {
+    const result = resolveActionContract({
+      decision,
+      node,
+      projectId: 'project',
+      sources: [{
+        ...primarySource,
+        observedAt: '2026-09-20T12:00:00Z',
+        freshnessSlaMinutes: 1440,
+      }],
+      files,
+      now: new Date('2026-09-26T13:00:00Z'),
+    })
+
+    expect(result.status).toBe('needs_input')
+    expect(result.missingFields).toContain('base_branch')
+    expect(result.provenance.baseBranch).toBe('stale')
+    expect(result.blockers.join(' ')).toContain('must be refreshed')
   })
 
   it('blocks ambiguous repository identity rather than guessing', () => {
