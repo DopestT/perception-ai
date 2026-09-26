@@ -21,11 +21,39 @@ Deno.serve(async (req: Request) => {
   const url = Deno.env.get('SUPABASE_URL')
   const publishableKeys = JSON.parse(Deno.env.get('SUPABASE_PUBLISHABLE_KEYS') ?? '{}') as Record<string, string>
   const secretKeys = JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS') ?? '{}') as Record<string, string>
-  if (!githubToken || !url || !publishableKeys.default || !secretKeys.default) {
-    return json({ error: 'GitHub operator is not configured' }, 503)
+  const publishableKey =
+    publishableKeys.default
+    || Deno.env.get('SUPABASE_ANON_KEY')
+    || Deno.env.get('SUPABASE_PUBLISHABLE_KEY')
+  const secretKey =
+    secretKeys.default
+    || Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    || Deno.env.get('SUPABASE_SECRET_KEY')
+
+  if (!githubToken) {
+    return json({
+      ok: false,
+      phase: 'blocked',
+      error: 'GitHub Operator token is not configured.',
+      diagnostic: 'github_token_missing',
+    }, 503)
   }
 
-  const userClient = createClient(url, publishableKeys.default, {
+  if (!url || !publishableKey || !secretKey) {
+    return json({
+      ok: false,
+      phase: 'blocked',
+      error: 'GitHub Operator Supabase runtime credentials are incomplete.',
+      diagnostic: 'supabase_runtime_credentials_missing',
+      missing: [
+        ...(!url ? ['SUPABASE_URL'] : []),
+        ...(!publishableKey ? ['publishable_key'] : []),
+        ...(!secretKey ? ['service_role_key'] : []),
+      ],
+    }, 503)
+  }
+
+  const userClient = createClient(url, publishableKey, {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { headers: { Authorization: authHeader } },
   })
@@ -33,7 +61,7 @@ Deno.serve(async (req: Request) => {
   const { data: userData, error: userError } = await userClient.auth.getUser(jwt)
   if (userError || !userData.user) return json({ error: 'Invalid session' }, 401)
 
-  const admin = createClient(url, secretKeys.default, { auth: { persistSession: false, autoRefreshToken: false } })
+  const admin = createClient(url, secretKey, { auth: { persistSession: false, autoRefreshToken: false } })
 
   try {
     const input = await req.json()
