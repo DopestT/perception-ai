@@ -317,10 +317,17 @@ export async function getSession(): Promise<Session | null> {
 
 export async function requestEmailSignIn(email: string): Promise<void> {
   const client = requireBackend()
-  const redirectTo = typeof window !== 'undefined' ? `${window.location.origin}/?auth=return` : undefined
+  const configuredAppUrl = (import.meta.env.VITE_APP_URL || 'https://perceptionai.io').replace(/\/$/, '')
+  const redirectBase = typeof window === 'undefined'
+    ? configuredAppUrl
+    : /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname)
+      ? configuredAppUrl
+      : window.location.origin
+  const redirectTo = `${redirectBase}/?auth=return`
+
   const { error } = await client.auth.signInWithOtp({
     email,
-    options: redirectTo ? { emailRedirectTo: redirectTo, shouldCreateUser: true } : { shouldCreateUser: true },
+    options: { emailRedirectTo: redirectTo, shouldCreateUser: true },
   })
   if (error) throw error
 }
