@@ -14,6 +14,7 @@ import {
   getProjectWorld,
   getSession,
   requestEmailSignIn,
+  registerPasskey,
   resolveForecast,
   signInWithOAuthProvider,
   signInWithPasskey,
@@ -143,6 +144,7 @@ function App() {
   const [attachingMarket, setAttachingMarket] = useState(false)
   const [runningIntelligence, setRunningIntelligence] = useState(false)
   const [runningOperatorTest, setRunningOperatorTest] = useState(false)
+  const [registeringPasskey, setRegisteringPasskey] = useState(false)
   const [marketNote, setMarketNote] = useState('')
   const [intelligenceNote, setIntelligenceNote] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
@@ -374,6 +376,21 @@ function App() {
     }
   }
 
+  const handleRegisterPasskey = async () => {
+    if (registeringPasskey) return
+    setRegisteringPasskey(true)
+    setError('')
+    setNotice('')
+    try {
+      await registerPasskey()
+      setNotice('Passkey enabled. Next time, you can sign in with Face ID, Touch ID, your device PIN, or a security key.')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Perception could not register a passkey on this device.')
+    } finally {
+      setRegisteringPasskey(false)
+    }
+  }
+
   const handlePasswordAuth = async (event: FormEvent) => {
     event.preventDefault()
     const address = email.trim()
@@ -556,6 +573,9 @@ function App() {
               {runningOperatorTest ? 'OPERATOR RUNNING…' : 'RUN OPERATOR PROOF'}
             </button>
             <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth' })}>PROJECT WORLD</button>
+            <button className="quiet-action" type="button" onClick={handleRegisterPasskey} disabled={registeringPasskey}>
+              {registeringPasskey ? 'ADDING PASSKEY…' : 'ENABLE PASSKEY'}
+            </button>
             <button className="icon-action" type="button" onClick={logout} aria-label="Sign out"><LogOut size={15} /></button>
           </div>
         ) : (
