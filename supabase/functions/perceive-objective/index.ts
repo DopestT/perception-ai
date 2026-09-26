@@ -376,8 +376,33 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      const persistedRouteNodes = activeRouteId
+        ? await admin
+            .from('perception_route_nodes')
+            .select('id, sort_order')
+            .eq('project_id', projectId)
+            .eq('route_id', activeRouteId)
+            .order('sort_order', { ascending: true })
+        : { data: [], error: null }
+
+      if (persistedRouteNodes.error) {
+        console.error('Perception persisted route-node lookup failed', {
+          code: persistedRouteNodes.error.code,
+          message: persistedRouteNodes.error.message,
+        })
+      }
+
+      const continuationPlanNodes = routePlan.nodes.filter((candidate) =>
+        !['resolve-meaning', 'first-reversible-action', 'verify-first-action'].includes(candidate.key)
+      )
+
       for (const decision of capabilityRouting.filter((candidate) => candidate.executionMode === 'external')) {
         const node = routePlan.nodes.find((candidate) => candidate.key === decision.nodeKey)
+        const continuationIndex = continuationPlanNodes.findIndex((candidate) => candidate.key === decision.nodeKey)
+        const expectedSortOrder = continuationIndex >= 0 ? continuationIndex + 1 : null
+        const routeNodeId = expectedSortOrder === null
+          ? null
+          : (persistedRouteNodes.data ?? []).find((candidate) => candidate.sort_order === expectedSortOrder)?.id ?? null
         let resolution = node
           ? resolveActionContract({
               decision,
@@ -446,6 +471,32 @@ Deno.serve(async (req: Request) => {
         const routingStatus = resolution?.status ?? decision.status
         const routingBlockers = resolution?.blockers ?? decision.blockers
         const target = resolution?.contract?.permission.target ?? null
+
+        if (routeNodeId && resolution) {
+          const routeNodeStatus = resolution.status === 'awaiting_permission'
+            ? 'awaiting_approval'
+            : resolution.status === 'ready'
+              ? 'ready'
+              : 'blocked'
+          const routeNodeBlocker = ['ready', 'awaiting_permission'].includes(resolution.status)
+            ? null
+            : resolution.blockers.join(' ').slice(0, 4000) || 'Action contract is not executable yet.'
+
+          const { error: routeNodeUpdateError } = await admin
+            .from('perception_route_nodes')
+            .update({ status: routeNodeStatus, blocker: routeNodeBlocker })
+            .eq('id', routeNodeId)
+            .eq('project_id', projectId)
+            .eq('route_id', activeRouteId)
+
+          if (routeNodeUpdateError) {
+            console.error('Perception action-contract route state update failed', {
+              code: routeNodeUpdateError.code,
+              message: routeNodeUpdateError.message,
+              node_key: decision.nodeKey,
+            })
+          }
+        }
         const actionKey = resolution?.idempotencyKey
           ?? `capability_route:${objectiveId ?? crypto.randomUUID()}:${decision.nodeKey}`
 
@@ -454,7 +505,7 @@ Deno.serve(async (req: Request) => {
           project_id: projectId,
           objective_id: objectiveId,
           route_id: activeRouteId,
-          route_node_id: null,
+          route_node_id: routeNodeId,
           worker_run_id: null,
           action_key: actionKey,
           phase: routingStatus === 'blocked' ? 'blocked' : 'intended',
