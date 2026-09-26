@@ -111,7 +111,7 @@ export function routeCapabilityNode(
         'base_branch',
         'branch',
         'summary',
-        'files',
+        'files_or_patch',
       ],
       blockers: [
         'A concrete GitHub action contract must be resolved before execution.',
