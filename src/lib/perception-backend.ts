@@ -567,23 +567,12 @@ export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfT
   const baseBranch = 'main'
   const target = `github://${repository}@${baseBranch}`
   const branch = `perception/operator-proof-${Date.now()}`
-  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString()
-
-  const { data: grant, error: grantError } = await client
-    .from('perception_permission_grants')
-    .insert({
-      user_id: authData.user.id,
-      project_id: projectId,
-      permission_level: 'P2',
-      capability: 'code',
-      target,
-      scope_note: 'One-time Perception self-test: bounded branch write only.',
-      expires_at: expiresAt,
-    })
-    .select('id')
-    .single()
+  const { data: grantId, error: grantError } = await client.rpc('perception_request_operator_proof_grant', {
+    p_project_id: projectId,
+  })
 
   if (grantError) throw grantError
+  if (!grantId) throw new Error('Perception could not create the temporary Operator permission grant.')
 
   const proofContent = [
     '# Perception Operator Live Proof',
@@ -636,9 +625,8 @@ export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfT
       changed_files: executed.changed_files || [],
     }
   } finally {
-    await client
-      .from('perception_permission_grants')
-      .update({ revoked_at: new Date().toISOString() })
-      .eq('id', grant.id)
+    await client.rpc('perception_revoke_operator_grant', {
+      p_grant_id: grantId,
+    })
   }
 }
