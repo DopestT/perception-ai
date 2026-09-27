@@ -415,4 +415,119 @@ where route_id = :'continuation_route_id'::uuid
   \quit 1
 \endif
 
-\echo 'PASS: Runtime v0.2 database safety gate'
+
+select public.perception_apply_dynamic_route_internal(
+  :'user1'::uuid,
+  :'continuation_project_id'::uuid,
+  :'continuation_objective_id'::uuid,
+  :'continuation_route_id'::uuid,
+  jsonb_build_object(
+    'reason', 'Runtime v0.3 Project World derived route',
+    'source', 'project_world_dynamic_v0_3',
+    'gaps', jsonb_build_array(
+      jsonb_build_object('key','unknown-1','kind','unknown','statement','Inspect current external state'),
+      jsonb_build_object('key','deliverable-1','kind','deliverable','statement','Create verified continuation artifact')
+    ),
+    'worldBlockers', '[]'::jsonb,
+    'blockedCapabilities', '[]'::jsonb,
+    'nodes', jsonb_build_array(
+      jsonb_build_object(
+        'key','resolve-unknown-1',
+        'label','Resolve material unknown',
+        'outcome','Inspect current external state',
+        'capability','research',
+        'permissionLevel','P0',
+        'confidence',0.9,
+        'risk','low',
+        'dependencies','[]'::jsonb,
+        'completionTests',jsonb_build_array(jsonb_build_object('description','Fresh evidence exists','kind','source'))
+      ),
+      jsonb_build_object(
+        'key','advance-deliverable-1',
+        'label','Create deliverable 1',
+        'outcome','Create verified continuation artifact',
+        'capability','generate',
+        'permissionLevel','P1',
+        'confidence',0.88,
+        'risk','low',
+        'dependencies',jsonb_build_array('resolve-unknown-1'),
+        'completionTests',jsonb_build_array(jsonb_build_object('description','Artifact exists','kind','deterministic'))
+      ),
+      jsonb_build_object(
+        'key','verify-deliverable-1',
+        'label','Verify deliverable 1',
+        'outcome','Evidence independently verifies the deliverable',
+        'capability','verify',
+        'permissionLevel','P0',
+        'confidence',0.97,
+        'risk','low',
+        'dependencies',jsonb_build_array('advance-deliverable-1'),
+        'completionTests',jsonb_build_array(jsonb_build_object('description','Evidence is inspectable','kind','deterministic'))
+      )
+    )
+  )
+);
+
+select id as dynamic_route_id, active as dynamic_route_active, version as dynamic_route_version, supersedes_route_id as dynamic_supersedes
+from public.perception_routes
+where objective_id = :'continuation_objective_id'::uuid
+order by version desc
+limit 1
+\gset
+
+select (:'dynamic_route_version'::integer = 3) as dynamic_version_ok
+\gset
+\if :dynamic_version_ok
+\else
+  \echo 'FAIL: dynamic Project World route did not advance to version 3'
+  \quit 1
+\endif
+
+\if :dynamic_route_active
+\else
+  \echo 'FAIL: dynamic Project World route is not active'
+  \quit 1
+\endif
+
+select (:'dynamic_supersedes'::uuid = :'continuation_route_id'::uuid) as dynamic_supersession_ok
+\gset
+\if :dynamic_supersession_ok
+\else
+  \echo 'FAIL: dynamic route does not supersede the prior active route'
+  \quit 1
+\endif
+
+select (count(*) = 3) as dynamic_node_count_ok
+from public.perception_route_nodes
+where route_id = :'dynamic_route_id'::uuid
+\gset
+\if :dynamic_node_count_ok
+\else
+  \echo 'FAIL: dynamic route node count is incorrect'
+  \quit 1
+\endif
+
+select (count(*) = 2) as dynamic_dependency_count_ok
+from public.perception_route_dependencies d
+join public.perception_route_nodes n on n.id = d.route_node_id
+where n.route_id = :'dynamic_route_id'::uuid
+\gset
+\if :dynamic_dependency_count_ok
+\else
+  \echo 'FAIL: dynamic route dependencies were not persisted'
+  \quit 1
+\endif
+
+select (count(*) = 1) as reality_mapped_event_ok
+from public.perception_model_events
+where project_id = :'continuation_project_id'::uuid
+  and event_type = 'reality.mapped'
+  and payload->>'route_id' = :'dynamic_route_id'
+\gset
+\if :reality_mapped_event_ok
+\else
+  \echo 'FAIL: dynamic route did not record reality.mapped provenance'
+  \quit 1
+\endif
+
+\echo 'PASS: Runtime v0.2 + v0.3 database safety gate'
