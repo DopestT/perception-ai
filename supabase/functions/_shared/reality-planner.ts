@@ -69,17 +69,21 @@ function explicitExternalAction(desiredReality: string): { capability: Capabilit
   if (/\b(delete|remove permanently|revoke access|change password|change access)\b/.test(value)) {
     return { capability: 'edit', permission: 'P3', label: 'Perform consequential change' }
   }
-  if (/\b(publish|post publicly|send|email|message|announce)\b/.test(value)) {
-    return { capability: 'communicate', permission: 'P3', label: 'Perform external communication' }
-  }
   if (/\b(deploy|ship to production|release to production)\b/.test(value)) {
     return { capability: 'code', permission: 'P3', label: 'Deploy verified change' }
   }
+
+  // Repository/code intent must win over incidental communication nouns such as
+  // "commit message" or "proof message". Otherwise a bounded GitHub write can
+  // be misrouted to an unattached communication capability.
   if (
     /\b(commit|create (?:a )?branch)\b/.test(value)
     || (/\b(edit|modify|change|update|create)\b/.test(value) && /\b(github|repo|repository|branch|code)\b/.test(value))
   ) {
     return { capability: 'code', permission: 'P2', label: 'Make bounded repository change' }
+  }
+  if (/\b(publish|post publicly|send|email|message|announce)\b/.test(value)) {
+    return { capability: 'communicate', permission: 'P3', label: 'Perform external communication' }
   }
   if (/\b(schedule|book|reserve)\b/.test(value)) {
     return { capability: 'schedule', permission: 'P2', label: 'Perform scheduled action' }
