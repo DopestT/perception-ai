@@ -8,6 +8,7 @@ import {
 const valid = {
   repository: 'DopestT/perception-ai',
   base_branch: 'main',
+  expected_base_sha: '1111111111111111111111111111111111111111',
   branch: 'operator/bounded-change',
   summary: 'Bounded change',
   files: [{ path: 'src/example.ts', content: 'export const ok = true' }],
@@ -22,6 +23,10 @@ const valid = {
 describe('GitHub executor boundary', () => {
   it('accepts a scoped branch-only change', () => {
     expect(validateGitHubExecutionRequest(valid)).toEqual([])
+  })
+
+  it('requires a materialized base commit pin', () => {
+    expect(validateGitHubExecutionRequest({ ...valid, expected_base_sha: '' }).join(' ')).toContain('base commit SHA')
   })
 
   it('blocks writes directly to the base branch', () => {
