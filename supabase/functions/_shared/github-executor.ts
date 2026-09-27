@@ -37,6 +37,12 @@ export function validateGitHubExecutionRequest(input: GitHubExecutionRequest): s
   return failures
 }
 
+export function validateExpectedBaseSha(expectedBaseSha: string, observedBaseSha: string): string[] {
+  return expectedBaseSha === observedBaseSha
+    ? []
+    : [`Base branch moved after planning. Expected ${expectedBaseSha}, observed ${observedBaseSha}. Rematerialize before execution.`]
+}
+
 export function findUnexpectedChangedFiles(changedFiles: string[], plannedFiles: string[]): string[] {
   const planned = new Set(plannedFiles)
   return changedFiles.filter((file) => !planned.has(file))
@@ -110,13 +116,12 @@ export async function executeBoundedGitHubChange(input: GitHubExecutionRequest, 
   const api = `https://api.github.com/repos/${owner}/${repository}`
   const base = await githubJson(token, `${api}/git/ref/heads/${encodeURIComponent(baseBranch)}`)
   const baseSha = base.object.sha as string
-  if (baseSha !== input.expected_base_sha) {
+  const basePinFailures = validateExpectedBaseSha(input.expected_base_sha, baseSha)
+  if (basePinFailures.length) {
     return {
       ok: false,
       phase: 'blocked',
-      failures: [
-        `Base branch moved after planning. Expected ${input.expected_base_sha}, observed ${baseSha}. Rematerialize before execution.`,
-      ],
+      failures: basePinFailures,
       repository: input.repository,
       base_branch: baseBranch,
       expected_base_sha: input.expected_base_sha,
