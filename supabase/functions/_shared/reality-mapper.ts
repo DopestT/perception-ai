@@ -77,7 +77,7 @@ export function mapProjectReality(
 ): RealityMap {
   const artifactEvidence = snapshot.artifacts.flatMap((artifact) => [
     artifact.title,
-    artifact.content ?? '',
+    artifact.artifactType === 'execution_brief' ? '' : (artifact.content ?? ''),
   ]).filter(Boolean)
 
   const epistemicEvidence = snapshot.epistemic
