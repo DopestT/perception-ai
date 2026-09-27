@@ -405,11 +405,19 @@ export async function getSession(): Promise<Session | null> {
 
 function authRedirectTo(): string {
   const configuredAppUrl = (import.meta.env.VITE_APP_URL || 'https://www.perceptionai.io').replace(/\/$/, '')
-  const redirectBase = typeof window === 'undefined'
-    ? configuredAppUrl
-    : /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname)
-      ? configuredAppUrl
-      : window.location.origin
+
+  if (typeof window === 'undefined') {
+    return `${configuredAppUrl}/?auth=return`
+  }
+
+  const currentOrigin = window.location.origin.replace(/\/$/, '')
+  const isCanonicalProduction =
+    currentOrigin === 'https://www.perceptionai.io' ||
+    currentOrigin === 'https://perceptionai.io'
+
+  // Never let preview/local deployments become the auth callback destination.
+  // Supabase auth should always return users to the canonical Perception app.
+  const redirectBase = isCanonicalProduction ? currentOrigin : configuredAppUrl
   return `${redirectBase}/?auth=return`
 }
 
