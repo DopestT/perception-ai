@@ -1,7 +1,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { governTask, routeModelTargets, type ModelPrice, type ModelProtocol, type ModelTarget } from '../_shared/token-efficiency.ts'
 import { resolveObjectiveMeaning } from '../_shared/meaning-resolver.ts'
-import { planInitialRealityRoute } from '../_shared/reality-planner.ts'
+import { planDynamicRealityRoute } from '../_shared/reality-planner.ts'
+import { mapProjectReality, type ProjectRealitySnapshot } from '../_shared/reality-mapper.ts'
 import { routePlannedCapabilities } from '../_shared/capability-router.ts'
 import { buildGitHubActionContract, repositoryFromGitHubLocator } from '../_shared/action-contract.ts'
 import { materializeGitHubCodePlan, type GitHubCodePlanResult } from '../_shared/code-plan-materializer.ts'
@@ -210,19 +211,176 @@ Deno.serve(async (req: Request) => {
       ...operatorCapabilities,
     ]))
 
-    const routePlan = planInitialRealityRoute({
+    const plannerMeaning = {
       desiredReality: meaning.desired_reality,
       currentReality: meaning.current_reality,
       constraints: meaning.constraints,
       successCriteria: meaning.success_criteria,
       deliverables: meaning.deliverables,
       knownUnknowns: meaning.known_unknowns,
-    }, {
-      availableCapabilities: availableCapabilities.filter((capability) =>
-        ['reason', 'research', 'retrieve', 'generate', 'edit', 'code', 'communicate', 'schedule', 'calculate', 'verify']
-          .includes(capability)
-      ) as Array<'reason' | 'research' | 'retrieve' | 'generate' | 'edit' | 'code' | 'communicate' | 'schedule' | 'calculate' | 'verify'>,
+    }
+
+    const plannerCapabilities = availableCapabilities.filter((capability) =>
+      ['reason', 'research', 'retrieve', 'generate', 'edit', 'code', 'communicate', 'schedule', 'calculate', 'verify']
+        .includes(capability)
+    ) as Array<'reason' | 'research' | 'retrieve' | 'generate' | 'edit' | 'code' | 'communicate' | 'schedule' | 'calculate' | 'verify'>
+
+    let runtimeData: unknown
+    let runtimeError: { code?: string; message?: string } | null = null
+
+    // Establish a verified first Project World state before mapping the continuation route.
+    // This prevents pre-Project heuristics from being mistaken for observed reality.
+    const resolvedCall = await admin.rpc('perception_submit_resolved_objective_internal', {
+      p_user_id: userData.user.id,
+      p_statement: statement,
+      p_semantics: meaning,
     })
+
+    runtimeData = resolvedCall.data
+    runtimeError = resolvedCall.error
+
+    if (runtimeError?.code === 'PGRST202' || runtimeError?.code === '42883') {
+      const fallbackCall = await admin.rpc('perception_submit_objective_internal', {
+        p_user_id: userData.user.id,
+        p_statement: statement,
+      })
+      runtimeData = fallbackCall.data
+      runtimeError = fallbackCall.error
+    }
+
+    if (runtimeError) {
+      console.error('Perception objective runtime failed', {
+        code: runtimeError.code,
+        message: runtimeError.message,
+      })
+      return json({ error: 'Objective runtime failed' }, 500)
+    }
+
+    let runtimeResult = runtimeData && typeof runtimeData === 'object' && !Array.isArray(runtimeData)
+      ? runtimeData as Record<string, unknown>
+      : {}
+    const projectId = typeof runtimeResult.project_id === 'string' ? runtimeResult.project_id : null
+    const objectiveId = typeof runtimeResult.objective_id === 'string' ? runtimeResult.objective_id : null
+    const routeId = typeof runtimeResult.route_id === 'string' ? runtimeResult.route_id : null
+
+    let realitySnapshot: ProjectRealitySnapshot = {
+      currentReality: meaning.current_reality,
+      desiredReality: meaning.desired_reality,
+      artifacts: [],
+      verifications: [],
+      epistemic: [],
+      execution: [],
+      blockers: [],
+    }
+
+    if (projectId) {
+      const [projectState, artifactsState, verificationsState, epistemicState, executionState, nodesState] = await Promise.all([
+        admin
+          .from('perception_projects')
+          .select('current_reality, desired_reality')
+          .eq('id', projectId)
+          .eq('user_id', userData.user.id)
+          .maybeSingle(),
+        admin
+          .from('perception_artifacts')
+          .select('title, content, artifact_type')
+          .eq('project_id', projectId)
+          .eq('user_id', userData.user.id)
+          .order('created_at', { ascending: false })
+          .limit(100),
+        admin
+          .from('perception_verification_runs')
+          .select('passed, details')
+          .eq('project_id', projectId)
+          .eq('user_id', userData.user.id)
+          .order('checked_at', { ascending: false })
+          .limit(100),
+        admin
+          .from('perception_epistemic_ledger')
+          .select('statement, state, confidence, route_impact')
+          .eq('project_id', projectId)
+          .eq('user_id', userData.user.id)
+          .order('created_at', { ascending: false })
+          .limit(200),
+        admin
+          .from('perception_execution_ledger')
+          .select('action_key, phase, details')
+          .eq('project_id', projectId)
+          .eq('user_id', userData.user.id)
+          .order('created_at', { ascending: false })
+          .limit(200),
+        admin
+          .from('perception_route_nodes')
+          .select('blocker')
+          .eq('project_id', projectId)
+          .eq('user_id', userData.user.id)
+          .order('created_at', { ascending: false })
+          .limit(200),
+      ])
+
+      realitySnapshot = {
+        currentReality: projectState.data?.current_reality || meaning.current_reality,
+        desiredReality: projectState.data?.desired_reality || meaning.desired_reality,
+        artifacts: (artifactsState.data ?? []).map((artifact) => ({
+          title: artifact.title || '',
+          content: artifact.content,
+          artifactType: artifact.artifact_type,
+        })),
+        verifications: (verificationsState.data ?? []).map((verification) => ({
+          passed: Boolean(verification.passed),
+          details: verification.details as Record<string, unknown> | null,
+        })),
+        epistemic: (epistemicState.data ?? []).map((claim) => ({
+          statement: claim.statement || '',
+          state: claim.state,
+          confidence: Number(claim.confidence ?? 0),
+          routeImpact: claim.route_impact,
+        })) as ProjectRealitySnapshot['epistemic'],
+        execution: (executionState.data ?? []).map((entry) => ({
+          actionKey: entry.action_key || '',
+          phase: entry.phase,
+          details: entry.details as Record<string, unknown> | null,
+        })) as ProjectRealitySnapshot['execution'],
+        blockers: (nodesState.data ?? [])
+          .map((node) => node.blocker)
+          .filter((blocker): blocker is string => typeof blocker === 'string' && blocker.trim().length > 0),
+      }
+    }
+
+    const realityMap = mapProjectReality(plannerMeaning, realitySnapshot)
+    const routePlan = planDynamicRealityRoute(plannerMeaning, realityMap, {
+      availableCapabilities: plannerCapabilities,
+    })
+
+    if (projectId && objectiveId && routeId) {
+      const dynamicRouteCall = await admin.rpc('perception_apply_dynamic_route_internal', {
+        p_user_id: userData.user.id,
+        p_project_id: projectId,
+        p_objective_id: objectiveId,
+        p_previous_route_id: routeId,
+        p_plan: routePlan,
+      })
+
+      if (!dynamicRouteCall.error && dynamicRouteCall.data && typeof dynamicRouteCall.data === 'object') {
+        runtimeResult = {
+          ...runtimeResult,
+          ...(dynamicRouteCall.data as Record<string, unknown>),
+        }
+      } else if (
+        dynamicRouteCall.error?.code !== 'PGRST202'
+        && dynamicRouteCall.error?.code !== '42883'
+      ) {
+        console.error('Perception dynamic route persistence failed', {
+          code: dynamicRouteCall.error?.code,
+          message: dynamicRouteCall.error?.message,
+        })
+      }
+    }
+
+    const continuationRouteId = typeof runtimeResult.continuation_route_id === 'string'
+      ? runtimeResult.continuation_route_id
+      : null
+    const activeRouteId = continuationRouteId ?? routeId
 
     const capabilityRouting = routePlannedCapabilities(routePlan.nodes, {
       githubOperatorAttached: operatorCapabilities.includes('code'),
@@ -245,58 +403,6 @@ Deno.serve(async (req: Request) => {
           budgetPressure,
         })
       : null
-
-    let runtimeData: unknown
-    let runtimeError: { code?: string; message?: string } | null = null
-
-    const plannedCall = await admin.rpc('perception_submit_planned_objective_internal', {
-      p_user_id: userData.user.id,
-      p_statement: statement,
-      p_semantics: meaning,
-      p_plan: routePlan,
-    })
-
-    runtimeData = plannedCall.data
-    runtimeError = plannedCall.error
-
-    // Roll back one runtime generation at a time so previews remain functional before migrations land.
-    if (runtimeError?.code === 'PGRST202' || runtimeError?.code === '42883') {
-      const resolvedCall = await admin.rpc('perception_submit_resolved_objective_internal', {
-        p_user_id: userData.user.id,
-        p_statement: statement,
-        p_semantics: meaning,
-      })
-      runtimeData = resolvedCall.data
-      runtimeError = resolvedCall.error
-    }
-
-    if (runtimeError?.code === 'PGRST202' || runtimeError?.code === '42883') {
-      const fallbackCall = await admin.rpc('perception_submit_objective_internal', {
-        p_user_id: userData.user.id,
-        p_statement: statement,
-      })
-      runtimeData = fallbackCall.data
-      runtimeError = fallbackCall.error
-    }
-
-    if (runtimeError) {
-      console.error('Perception objective runtime failed', {
-        code: runtimeError.code,
-        message: runtimeError.message,
-      })
-      return json({ error: 'Objective runtime failed' }, 500)
-    }
-
-    const runtimeResult = runtimeData && typeof runtimeData === 'object' && !Array.isArray(runtimeData)
-      ? runtimeData as Record<string, unknown>
-      : {}
-    const projectId = typeof runtimeResult.project_id === 'string' ? runtimeResult.project_id : null
-    const objectiveId = typeof runtimeResult.objective_id === 'string' ? runtimeResult.objective_id : null
-    const routeId = typeof runtimeResult.route_id === 'string' ? runtimeResult.route_id : null
-    const continuationRouteId = typeof runtimeResult.continuation_route_id === 'string'
-      ? runtimeResult.continuation_route_id
-      : null
-    const activeRouteId = continuationRouteId ?? routeId
 
     let boundGitHubRepository: string | null = null
     if (projectId && capabilityRouting.some((decision) => decision.adapter === 'github-operator')) {
@@ -841,6 +947,7 @@ Deno.serve(async (req: Request) => {
     return json({
       ...runtimeResult,
       meaning,
+      reality_map: realityMap,
       route_plan: routePlan,
       capability_routing: capabilityRouting,
       action_contracts: actionContracts,
