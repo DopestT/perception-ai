@@ -10,6 +10,7 @@ import {
   getForecastCalibration,
   getLatestForecast,
   getLatestProjectWorld,
+  getPendingPerceptionGitHubSelfTest,
   getProjectLedgers,
   getProjectWorld,
   getSession,
@@ -21,6 +22,7 @@ import {
   signInWithPassword,
   signUpWithPassword,
   runAutonomousForecast,
+  denyPerceptionGitHubSelfTest,
   executePerceptionGitHubSelfTest,
   preparePerceptionGitHubSelfTest,
   signOut,
@@ -167,9 +169,13 @@ function App() {
       : experienceModes.find((mode) => mode.id === experienceMode) ?? experienceModes[1]
 
   const loadLatestWorld = useCallback(async () => {
-    const latest = await getLatestProjectWorld()
+    const [latest, pendingApproval] = await Promise.all([
+      getLatestProjectWorld(),
+      getPendingPerceptionGitHubSelfTest(),
+    ])
     setWorld(latest)
     setLedgers(latest ? await getProjectLedgers(latest.project.id) : null)
+    setOperatorPlan(pendingApproval)
   }, [])
 
   const loadForecastState = useCallback(async () => {
@@ -543,6 +549,31 @@ function App() {
     }
   }
 
+  const handleDenyOperatorProof = async () => {
+    if (!operatorPlan || runningOperatorTest || busy) return
+    setRunningOperatorTest(true)
+    setBusy(true)
+    setError('')
+    setNotice('')
+
+    try {
+      const deniedProjectId = operatorPlan.project_id
+      await denyPerceptionGitHubSelfTest(operatorPlan)
+      setOperatorPlan(null)
+      if (world?.project.id === deniedProjectId) {
+        setLedgers(await getProjectLedgers(deniedProjectId))
+      }
+      setPortalMode('idle')
+      setNotice('Operator action denied. The decision is now recorded in the Execution Ledger.')
+    } catch (cause) {
+      setPortalMode('focused')
+      setError(cause instanceof Error ? cause.message : 'Perception could not record the denial.')
+    } finally {
+      setRunningOperatorTest(false)
+      setBusy(false)
+    }
+  }
+
   const logout = async () => {
     setError('')
     try {
@@ -817,20 +848,23 @@ function App() {
           if (event.target === event.currentTarget && !runningOperatorTest) setOperatorPlan(null)
         }}>
           <section className="approval-card" role="dialog" aria-modal="true" aria-labelledby="operator-approval-title">
-            <button className="auth-close" type="button" onClick={() => setOperatorPlan(null)} disabled={runningOperatorTest} aria-label="Cancel approval"><X size={18} /></button>
+            <button className="auth-close" type="button" onClick={() => setOperatorPlan(null)} disabled={runningOperatorTest} aria-label="Close approval review"><X size={18} /></button>
             <div className="approval-icon"><ShieldCheck size={18} /></div>
             <p className="section-kicker">P2 · EXPLICIT APPROVAL</p>
             <h2 id="operator-approval-title">Review the exact GitHub change.</h2>
-            <p className="approval-intro">P1 has only inspected and planned. No GitHub write permission has been granted yet.</p>
+            <p className="approval-intro">P1 has only inspected and planned. Closing this review does not approve or deny it; the pending action will remain recoverable from the Execution Ledger.</p>
 
             <div className="approval-grid">
+              <div><span>STATUS</span><strong>AWAITING YOUR DECISION</strong></div>
+              <div><span>PERMISSION WINDOW</span><strong>15 minutes after approval · revoked after execution</strong></div>
               <div><span>REPOSITORY</span><strong>{operatorPlan.contract.repository}</strong></div>
               <div><span>BASE</span><strong>{operatorPlan.contract.base_branch} · {operatorPlan.contract.base_sha?.slice(0, 10)}</strong></div>
               <div className="approval-wide"><span>WORKING BRANCH</span><strong>{operatorPlan.contract.working_branch}</strong></div>
               <div className="approval-wide"><span>PLANNED FILES</span><strong>{operatorPlan.files.map((file) => file.path).join(', ')}</strong></div>
               <div className="approval-wide"><span>TESTS</span><strong>{operatorPlan.contract.tests.join(' · ') || 'Bounded scope and independent GitHub observation'}</strong></div>
-              <div><span>PERMISSION</span><strong>{operatorPlan.contract.permission.level} · temporary</strong></div>
-              <div><span>ROLLBACK</span><strong>Delete working branch</strong></div>
+              <div className="approval-wide"><span>VERIFICATION</span><strong>{operatorPlan.contract.verification.requirements.join(' · ')}</strong></div>
+              <div><span>PERMISSION</span><strong>{operatorPlan.contract.permission.level} · {operatorPlan.contract.permission.capability}</strong></div>
+              <div><span>ROLLBACK</span><strong>Delete working branch · main remains untouched</strong></div>
             </div>
 
             <div className="approval-guardrail">
@@ -839,7 +873,8 @@ function App() {
             </div>
 
             <div className="approval-actions">
-              <button type="button" className="approval-cancel" onClick={() => setOperatorPlan(null)} disabled={runningOperatorTest}>CANCEL</button>
+              <button type="button" className="approval-cancel" onClick={() => setOperatorPlan(null)} disabled={runningOperatorTest}>NOT NOW</button>
+              <button type="button" className="approval-deny" onClick={handleDenyOperatorProof} disabled={runningOperatorTest}>DENY</button>
               <button type="button" className="approval-run" onClick={handleApproveOperatorProof} disabled={runningOperatorTest}>
                 {runningOperatorTest ? 'EXECUTING…' : 'APPROVE P2 & RUN PROOF'}
               </button>
