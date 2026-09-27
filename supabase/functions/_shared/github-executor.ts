@@ -1,6 +1,7 @@
 export type GitHubExecutionRequest = {
   repository: string
   base_branch?: string
+  expected_base_sha: string
   branch: string
   summary: string
   files: Array<{ path: string; content: string }>
@@ -15,6 +16,7 @@ export type GitHubExecutionRequest = {
 
 const allowedRepository = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
 const allowedBranch = /^[A-Za-z0-9._/-]+$/
+const allowedSha = /^[0-9a-f]{40}$/i
 
 export function validateGitHubExecutionRequest(input: GitHubExecutionRequest): string[] {
   const failures: string[] = []
@@ -22,6 +24,7 @@ export function validateGitHubExecutionRequest(input: GitHubExecutionRequest): s
   const target = `github://${input.repository}@${baseBranch}`
 
   if (!allowedRepository.test(input.repository)) failures.push('Repository must use owner/name format.')
+  if (!allowedSha.test(input.expected_base_sha || '')) failures.push('A materialized 40-character base commit SHA is required.')
   if (!allowedBranch.test(input.branch) || input.branch.includes('..')) failures.push('Branch name is invalid.')
   if (input.branch === baseBranch) failures.push('Operator writes must use a bounded branch, never the base branch.')
   if (!input.files.length) failures.push('At least one planned file is required.')
@@ -107,6 +110,21 @@ export async function executeBoundedGitHubChange(input: GitHubExecutionRequest, 
   const api = `https://api.github.com/repos/${owner}/${repository}`
   const base = await githubJson(token, `${api}/git/ref/heads/${encodeURIComponent(baseBranch)}`)
   const baseSha = base.object.sha as string
+  if (baseSha !== input.expected_base_sha) {
+    return {
+      ok: false,
+      phase: 'blocked',
+      failures: [
+        `Base branch moved after planning. Expected ${input.expected_base_sha}, observed ${baseSha}. Rematerialize before execution.`,
+      ],
+      repository: input.repository,
+      base_branch: baseBranch,
+      expected_base_sha: input.expected_base_sha,
+      expected_base_sha: input.expected_base_sha,
+      base_sha: baseSha,
+      branch: input.branch,
+    }
+  }
   const plannedFiles = input.files.map((file) => file.path)
 
   const existingBranch = await githubJsonIfPresent(
@@ -151,6 +169,7 @@ export async function executeBoundedGitHubChange(input: GitHubExecutionRequest, 
       dry_run: true,
       repository: input.repository,
       base_branch: baseBranch,
+      expected_base_sha: input.expected_base_sha,
       base_sha: baseSha,
       branch: input.branch,
       branch_reused: branchReused,
@@ -216,6 +235,7 @@ export async function executeBoundedGitHubChange(input: GitHubExecutionRequest, 
     phase: unexpectedFiles.length === 0 ? 'observed' : 'failed',
     repository: input.repository,
     base_branch: baseBranch,
+    expected_base_sha: input.expected_base_sha,
     base_sha: baseSha,
     branch: input.branch,
     branch_reused: branchReused,
