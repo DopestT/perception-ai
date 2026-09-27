@@ -684,6 +684,14 @@ export type GitHubOperatorSelfTestPlan = {
   files: Array<{ path: string; content: string }>
 }
 
+export type GitHubApprovalLedgerRow = {
+  project_id: string
+  action_key: string
+  phase: ProjectLedgers['execution'][number]['phase']
+  details: Record<string, unknown>
+  created_at: string
+}
+
 type GitHubOperatorResponse = {
   ok: boolean
   phase?: string
@@ -722,6 +730,75 @@ function validateOperatorProofContract(contract: GitHubActionContract | undefine
   }
 
   return { contract, files }
+}
+
+export function recoverPendingPerceptionGitHubSelfTest(
+  rows: GitHubApprovalLedgerRow[],
+): GitHubOperatorSelfTestPlan | null {
+  const seen = new Set<string>()
+
+  for (const row of rows) {
+    if (!row.action_key || seen.has(row.action_key)) continue
+    seen.add(row.action_key)
+    if (row.phase !== 'intended') continue
+
+    const rawContract = row.details?.action_contract
+    if (!rawContract || typeof rawContract !== 'object' || Array.isArray(rawContract)) continue
+
+    try {
+      const resolved = validateOperatorProofContract(rawContract as GitHubActionContract)
+      if (resolved.contract.action_key !== row.action_key) continue
+      if (resolved.contract.project_id !== row.project_id) continue
+      if (resolved.contract.permission.status === 'active') continue
+
+      return {
+        project_id: row.project_id,
+        contract: resolved.contract,
+        files: resolved.files,
+      }
+    } catch {
+      // Ignore stale or malformed ledger payloads and continue to the next action.
+    }
+  }
+
+  return null
+}
+
+export async function getPendingPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfTestPlan | null> {
+  const client = requireBackend()
+  const { data: authData, error: authError } = await client.auth.getUser()
+  if (authError) throw authError
+  if (!authData.user) return null
+
+  const { data, error } = await client
+    .from('perception_execution_ledger')
+    .select('project_id, action_key, phase, details, created_at')
+    .eq('capability', 'code')
+    .in('permission_level', ['P2', 'P3'])
+    .order('created_at', { ascending: false })
+    .limit(200)
+
+  if (error) throw error
+  return recoverPendingPerceptionGitHubSelfTest((data ?? []) as GitHubApprovalLedgerRow[])
+}
+
+export async function denyPerceptionGitHubSelfTest(
+  plan: GitHubOperatorSelfTestPlan,
+  reason = 'user_denied',
+): Promise<void> {
+  const client = requireBackend()
+  const resolved = validateOperatorProofContract(plan.contract)
+
+  if (resolved.contract.project_id !== plan.project_id) {
+    throw new Error('The denial plan no longer matches its Project World.')
+  }
+
+  const { error } = await client.rpc('perception_deny_operator_action', {
+    p_project_id: plan.project_id,
+    p_action_key: resolved.contract.action_key,
+    p_reason: reason,
+  })
+  if (error) throw error
 }
 
 export async function preparePerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfTestPlan> {

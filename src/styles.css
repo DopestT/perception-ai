@@ -669,6 +669,15 @@ button:disabled { cursor: default; }
   color: rgba(255,255,255,.48);
   background: rgba(255,255,255,.025);
 }
+.approval-deny {
+  border: 1px solid rgba(255, 112, 82, .16);
+  color: rgba(255, 170, 148, .76);
+  background: rgba(255, 74, 40, .025);
+}
+.approval-deny:hover:not(:disabled) {
+  border-color: rgba(255, 112, 82, .3);
+  background: rgba(255, 74, 40, .055);
+}
 .approval-run {
   border: 1px solid rgba(106, 230, 213, .22);
   color: #07100f;
