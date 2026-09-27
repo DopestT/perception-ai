@@ -858,24 +858,7 @@ function App() {
               <>
                 <p className="section-kicker">YOUR PERCEPTION ACCOUNT</p>
                 <h2 id="auth-title">Continue your Project World.</h2>
-                <p>Choose the fastest secure way in. Your existing Perception history stays attached to the same verified account.</p>
-
-                <div className="auth-provider-stack">
-                  <button type="button" className="auth-provider" onClick={() => handleOAuthSignIn('google')} disabled={authBusy}>
-                    <span className="auth-provider-mark">G</span>
-                    <span>Continue with Google</span>
-                  </button>
-                  <button type="button" className="auth-provider" onClick={() => handleOAuthSignIn('apple')} disabled={authBusy}>
-                    <span className="auth-provider-mark">A</span>
-                    <span>Continue with Apple</span>
-                  </button>
-                  <button type="button" className="auth-provider" onClick={handlePasskeySignIn} disabled={authBusy}>
-                    <KeyRound size={16} />
-                    <span>Use a passkey</span>
-                  </button>
-                </div>
-
-                <div className="auth-divider"><span>or use email</span></div>
+                <p>Sign in with the email attached to your Perception account. Your existing Perception history stays attached to the same verified account.</p>
 
                 {authMode !== 'magic' ? (
                   <>
@@ -934,7 +917,7 @@ function App() {
             )}
 
             {error && <p className="auth-error" role="alert">{error}</p>}
-            <small>Google and Apple identities with the same verified email are automatically linked by Supabase Auth. Passkeys require one-time enrollment after an account is confirmed.</small>
+            <small>Email/password is active now. If you do not have a password yet, request a fresh email sign-in link.</small>
           </section>
         </div>
       )}
