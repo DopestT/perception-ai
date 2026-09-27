@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mapProjectReality } from './reality-mapper'
+import { mapProjectReality, type ProjectRealitySnapshot } from './reality-mapper'
 import { planDynamicRealityRoute } from './reality-planner'
 
 const baseMeaning = {
@@ -11,7 +11,7 @@ const baseMeaning = {
   knownUnknowns: ['Current launch assets are unknown'],
 }
 
-const snapshot = {
+const snapshot: ProjectRealitySnapshot = {
   currentReality: 'Verified first-action brief created; broader objective remains active.',
   desiredReality: 'Launch a verified product',
   artifacts: [
@@ -25,7 +25,7 @@ const snapshot = {
   epistemic: [],
   execution: [],
   blockers: [],
-} as const
+}
 
 describe('Project World Reality Mapper v0.3', () => {
   it('does not treat the first-action brief repeating desired reality as completion evidence', () => {
