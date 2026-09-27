@@ -117,15 +117,38 @@ Deno.serve(async (req: Request) => {
       if (error) throw new Error(`Execution ledger write failed: ${error.message}`)
     }
 
-    await record('authorized', { dry_run: !input.execute, summary: input.summary, branch: input.branch, permission_grant_id: grant.id })
-    if (input.execute) await record('attempted', { planned_files: input.files?.map((file: { path: string }) => file.path) || [] })
+    await record('authorized', {
+      dry_run: !input.execute,
+      summary: input.summary,
+      branch: input.branch,
+      expected_base_sha: input.expected_base_sha,
+      permission_grant_id: grant.id,
+    })
+    if (input.execute) {
+      await record('attempted', {
+        expected_base_sha: input.expected_base_sha,
+        planned_files: input.files?.map((file: { path: string }) => file.path) || [],
+      })
+    }
 
     const result = await executeBoundedGitHubChange(input, githubToken)
 
     if (result.phase === 'observed') {
-      await record('observed', { branch: result.branch, commit_sha: result.commit_sha, changed_files: result.changed_files }, result.evidence || [])
+      await record('observed', {
+        branch: result.branch,
+        expected_base_sha: input.expected_base_sha,
+        observed_base_sha: result.base_sha,
+        commit_sha: result.commit_sha,
+        changed_files: result.changed_files,
+      }, result.evidence || [])
       if (result.ok) {
-        await record('verified', { branch: result.branch, commit_sha: result.commit_sha, changed_files: result.changed_files }, result.evidence || [])
+        await record('verified', {
+          branch: result.branch,
+          expected_base_sha: input.expected_base_sha,
+          observed_base_sha: result.base_sha,
+          commit_sha: result.commit_sha,
+          changed_files: result.changed_files,
+        }, result.evidence || [])
 
         const verifiedReality = [
           `Verified GitHub change on ${input.repository}.`,
@@ -144,7 +167,11 @@ Deno.serve(async (req: Request) => {
         if (worldError) throw new Error(`Project World verified-effect update failed: ${worldError.message}`)
       }
     } else if (!result.ok) {
-      await record(result.phase === 'blocked' ? 'blocked' : 'failed', { failures: result.failures || result.unexpected_files || [] })
+      await record(result.phase === 'blocked' ? 'blocked' : 'failed', {
+        failures: result.failures || result.unexpected_files || [],
+        expected_base_sha: input.expected_base_sha,
+        observed_base_sha: result.base_sha || null,
+      })
     }
 
     return json({ ...result, ledger_recorded: true }, result.ok ? 200 : 400)
