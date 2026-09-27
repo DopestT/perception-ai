@@ -307,6 +307,7 @@ export type GitHubActionContract = {
   repository: string | null
   target: string | null
   base_branch: string
+  base_sha: string | null
   working_branch: string
   desired_changes: string
   files_or_patch:
@@ -321,6 +322,15 @@ export type GitHubActionContract = {
     target: string | null
     grant_id: string | null
     status: 'not_required' | 'required' | 'active'
+  }
+  verification: { requirements: string[] }
+  rollback: {
+    strategy: 'delete_working_branch'
+    production_branch_untouched: true
+  }
+  idempotency: {
+    key: string
+    strategy: 'reuse_or_block_on_existing_branch'
   }
   missing_fields: string[]
   status: 'needs_source' | 'needs_scope' | 'awaiting_permission' | 'ready'
@@ -660,6 +670,12 @@ export type GitHubOperatorSelfTestResult = {
   changed_files: string[]
 }
 
+export type GitHubOperatorSelfTestPlan = {
+  project_id: string
+  contract: GitHubActionContract
+  files: Array<{ path: string; content: string }>
+}
+
 type GitHubOperatorResponse = {
   ok: boolean
   phase?: string
@@ -670,24 +686,10 @@ type GitHubOperatorResponse = {
   error?: string
 }
 
-export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfTestResult> {
-  const client = requireBackend()
-  const objective = await submitObjective(
-    'Create docs/OPERATOR_LIVE_PROOF.md in the Perception GitHub repository on a bounded branch with a short non-secret proof message that says the P1 materializer planned this change. Verify the external effect independently and update Project World without changing main.',
-  )
-  if (!objective.ok || !objective.project_id) {
-    throw new Error(objective.stage || 'Could not create the Operator self-test Project World.')
-  }
-
-  const { data: authData, error: authError } = await client.auth.getUser()
-  if (authError) throw authError
-  if (!authData.user) throw new Error('Sign in before running the Operator self-test.')
-
-  const projectId = objective.project_id
-  const contract = objective.action_contracts?.find(
-    (candidate) => candidate.adapter === 'github-operator' && candidate.permission.level === 'P2',
-  )
-
+function validateOperatorProofContract(contract: GitHubActionContract | undefined): {
+  contract: GitHubActionContract
+  files: Array<{ path: string; content: string }>
+} {
   if (!contract) {
     throw new Error('Perception did not produce a bounded GitHub action contract for the Operator proof.')
   }
@@ -697,38 +699,87 @@ export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfT
   if (contract.target !== 'github://DopestT/perception-ai@main') {
     throw new Error(`Operator proof contract resolved an unexpected target: ${contract.target}.`)
   }
+  if (!contract.base_sha || !/^[0-9a-f]{40}$/i.test(contract.base_sha)) {
+    throw new Error('The P1 code-plan materializer did not pin the proof to a valid GitHub base commit.')
+  }
 
-  const repository = contract.repository
-  const baseBranch = contract.base_branch
-  const target = contract.target
-  const branch = contract.working_branch
-  const { data: grantId, error: grantError } = await client.rpc('perception_request_operator_proof_grant', {
-    p_project_id: projectId,
-  })
-
-  if (grantError) throw grantError
-  if (!grantId) throw new Error('Perception could not create the temporary Operator permission grant.')
-
-  const plannedFiles = contract.files_or_patch?.kind === 'files'
+  const files = contract.files_or_patch?.kind === 'files'
     ? contract.files_or_patch.files
     : []
 
-  if (plannedFiles.length !== 1 || plannedFiles[0]?.path !== 'docs/OPERATOR_LIVE_PROOF.md') {
+  if (files.length !== 1 || files[0]?.path !== 'docs/OPERATOR_LIVE_PROOF.md') {
     throw new Error(
       'The P1 code-plan materializer did not produce the exact bounded Operator proof file; execution is blocked.',
     )
   }
 
+  return { contract, files }
+}
+
+export async function preparePerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfTestPlan> {
+  const client = requireBackend()
+  const { data: authData, error: authError } = await client.auth.getUser()
+  if (authError) throw authError
+  if (!authData.user) throw new Error('Sign in before preparing the Operator proof.')
+
+  const objective = await submitObjective(
+    'Create docs/OPERATOR_LIVE_PROOF.md in the Perception GitHub repository on a bounded branch with a short non-secret proof message that says the P1 materializer planned this change. Verify the external effect independently and update Project World without changing main.',
+  )
+  if (!objective.ok || !objective.project_id) {
+    throw new Error(objective.stage || 'Could not create the Operator self-test Project World.')
+  }
+
+  const resolved = validateOperatorProofContract(
+    objective.action_contracts?.find(
+      (candidate) => candidate.adapter === 'github-operator' && candidate.permission.level === 'P2',
+    ),
+  )
+
+  if (resolved.contract.permission.status === 'active') {
+    throw new Error('The prepared proof unexpectedly already has an active permission grant.')
+  }
+
+  return {
+    project_id: objective.project_id,
+    contract: resolved.contract,
+    files: resolved.files,
+  }
+}
+
+export async function executePerceptionGitHubSelfTest(
+  plan: GitHubOperatorSelfTestPlan,
+): Promise<GitHubOperatorSelfTestResult> {
+  const client = requireBackend()
+  const { data: authData, error: authError } = await client.auth.getUser()
+  if (authError) throw authError
+  if (!authData.user) throw new Error('Sign in before approving the Operator proof.')
+
+  const resolved = validateOperatorProofContract(plan.contract)
+  const contract = resolved.contract
+  const files = resolved.files
+  const projectId = plan.project_id
+
+  if (contract.project_id !== projectId) {
+    throw new Error('The approval plan no longer matches its Project World.')
+  }
+
+  const { data: grantId, error: grantError } = await client.rpc('perception_request_operator_proof_grant', {
+    p_project_id: projectId,
+  })
+  if (grantError) throw grantError
+  if (!grantId) throw new Error('Perception could not create the temporary Operator permission grant.')
+
   const body = {
-    repository,
-    base_branch: baseBranch,
-    branch,
+    repository: contract.repository!,
+    base_branch: contract.base_branch,
+    expected_base_sha: contract.base_sha!,
+    branch: contract.working_branch,
     summary: contract.desired_changes || 'Perception live operator proof',
-    files: plannedFiles,
+    files,
     permission: {
       project_id: projectId,
       capability: 'code' as const,
-      target,
+      target: contract.target!,
       level: 'P2' as const,
     },
   }
@@ -752,7 +803,7 @@ export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfT
 
     return {
       project_id: projectId,
-      branch: executed.branch || branch,
+      branch: executed.branch || contract.working_branch,
       commit_sha: executed.commit_sha || null,
       changed_files: executed.changed_files || [],
     }
@@ -761,4 +812,9 @@ export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfT
       p_grant_id: grantId,
     })
   }
+}
+
+export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfTestResult> {
+  const plan = await preparePerceptionGitHubSelfTest()
+  return executePerceptionGitHubSelfTest(plan)
 }
