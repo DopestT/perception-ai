@@ -681,6 +681,7 @@ Deno.serve(async (req: Request) => {
             objectiveId,
             routeId: activeRouteId,
             repository: boundGitHubRepository,
+            baseSha: materializerResult?.base_sha ?? null,
             filesOrPatch,
             tests: materializedTests,
             permissionGrantId,
