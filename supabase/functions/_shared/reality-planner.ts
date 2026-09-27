@@ -1,3 +1,5 @@
+import type { RealityMap, RealityGap } from './reality-mapper.ts'
+
 export type CapabilityKind =
   | 'reason'
   | 'research'
@@ -55,6 +57,9 @@ export type PlannedRoute = {
   reason: string
   nodes: PlannedRouteNode[]
   blockedCapabilities: CapabilityKind[]
+  gaps?: RealityGap[]
+  worldBlockers?: string[]
+  source?: 'initial_heuristic_v0_2' | 'project_world_dynamic_v0_3'
 }
 
 type PlannerOptions = {
@@ -214,5 +219,180 @@ export function planInitialRealityRoute(
       : 'All planned capabilities are available.',
   ].join(' ')
 
-  return { reason, nodes, blockedCapabilities: Array.from(blockedCapabilities) }
+  return {
+    reason,
+    nodes,
+    blockedCapabilities: Array.from(blockedCapabilities),
+    source: 'initial_heuristic_v0_2',
+  }
+}
+
+function dependencyAwareStatus(
+  capability: CapabilityKind,
+  permissionLevel: PermissionLevel,
+  dependencies: string[],
+  available: Set<CapabilityKind>,
+): RouteNodeStatus {
+  if (!available.has(capability)) return 'blocked'
+  if (dependencies.length > 0) return 'pending'
+  if (permissionLevel === 'P2' || permissionLevel === 'P3') return 'awaiting_approval'
+  return 'ready'
+}
+
+export function planDynamicRealityRoute(
+  meaning: PlannerMeaning,
+  reality: RealityMap,
+  options: PlannerOptions = {},
+): PlannedRoute {
+  const available = new Set(options.availableCapabilities ?? defaultCapabilities)
+  const nodes: PlannedRouteNode[] = []
+  const blockedCapabilities = new Set<CapabilityKind>()
+  const unknownKeys: string[] = []
+  const verificationKeys: string[] = []
+  const external = explicitExternalAction(meaning.desiredReality)
+
+  for (const gap of reality.gaps.filter((candidate) => candidate.kind === 'unknown')) {
+    const capability: CapabilityKind = 'research'
+    const key = `resolve-${gap.key}`
+    unknownKeys.push(key)
+    if (!available.has(capability)) blockedCapabilities.add(capability)
+
+    nodes.push({
+      key,
+      label: 'Resolve material unknown',
+      outcome: gap.statement,
+      status: dependencyAwareStatus(capability, 'P0', [], available),
+      dependencies: [],
+      capability,
+      permissionLevel: 'P0',
+      confidence: gap.confidence,
+      risk: 'low',
+      completionTests: [{
+        description: `A fresh sourced observation resolves or explicitly preserves the unknown: ${gap.statement}`,
+        kind: 'source',
+      }],
+      blocker: available.has(capability)
+        ? undefined
+        : 'No research capability is currently attached to this runtime.',
+    })
+  }
+
+  const actionableGaps = reality.gaps.filter((gap) =>
+    gap.kind === 'deliverable' || (gap.kind === 'objective' && !external)
+  )
+
+  for (const [index, gap] of actionableGaps.entries()) {
+    const createKey = `advance-${gap.key}`
+    const verifyKey = `verify-${gap.key}`
+    const createCapability: CapabilityKind = 'generate'
+    const createDependencies = [...unknownKeys]
+
+    if (!available.has(createCapability)) blockedCapabilities.add(createCapability)
+    if (!available.has('verify')) blockedCapabilities.add('verify')
+
+    nodes.push({
+      key: createKey,
+      label: gap.kind === 'deliverable' ? `Create deliverable ${index + 1}` : 'Advance desired reality',
+      outcome: gap.statement,
+      status: dependencyAwareStatus(createCapability, 'P1', createDependencies, available),
+      dependencies: createDependencies,
+      capability: createCapability,
+      permissionLevel: 'P1',
+      confidence: gap.confidence,
+      risk: 'low',
+      completionTests: [{
+        description: `A bounded artifact exists for: ${gap.statement}`,
+        kind: 'deterministic',
+      }],
+      blocker: available.has(createCapability) ? undefined : 'Generate capability is unavailable.',
+    })
+
+    nodes.push({
+      key: verifyKey,
+      label: gap.kind === 'deliverable' ? `Verify deliverable ${index + 1}` : 'Verify progress',
+      outcome: `Evidence independently verifies progress toward: ${gap.statement}`,
+      status: available.has('verify') ? 'pending' : 'blocked',
+      dependencies: [createKey],
+      capability: 'verify',
+      permissionLevel: 'P0',
+      confidence: 0.97,
+      risk: 'low',
+      completionTests: [{
+        description: 'Completion evidence is inspectable and does not rely on worker self-report.',
+        kind: 'deterministic',
+      }],
+      blocker: available.has('verify') ? undefined : 'Verification capability is unavailable.',
+    })
+
+    verificationKeys.push(verifyKey)
+  }
+
+  if (external) {
+    const externalDependencies = verificationKeys.length > 0
+      ? [...verificationKeys]
+      : [...unknownKeys]
+
+    if (!available.has(external.capability)) blockedCapabilities.add(external.capability)
+
+    const externalKey = 'execute-external-effect'
+    nodes.push({
+      key: externalKey,
+      label: external.label,
+      outcome: meaning.desiredReality,
+      status: dependencyAwareStatus(external.capability, external.permission, externalDependencies, available),
+      dependencies: externalDependencies,
+      capability: external.capability,
+      permissionLevel: external.permission,
+      confidence: 0.82,
+      risk: external.permission === 'P3' ? 'high' : 'medium',
+      completionTests: [{
+        description: 'The external effect is independently observed with target-specific evidence.',
+        kind: 'external',
+      }],
+      blocker: available.has(external.capability)
+        ? undefined
+        : `${external.capability} capability is not currently attached.`,
+    })
+
+    if (!available.has('verify')) blockedCapabilities.add('verify')
+    nodes.push({
+      key: 'verify-external-effect',
+      label: 'Verify external effect',
+      outcome: 'Independent evidence determines whether the external action may advance Project World.',
+      status: available.has('verify') ? 'pending' : 'blocked',
+      dependencies: [externalKey],
+      capability: 'verify',
+      permissionLevel: 'P0',
+      confidence: 0.99,
+      risk: 'low',
+      completionTests: [{
+        description: 'Observed state matches the approved action contract and completion tests.',
+        kind: 'external',
+      }],
+      blocker: available.has('verify') ? undefined : 'Verification capability is unavailable.',
+    })
+  }
+
+  const reason = [
+    'Dynamic route derived after the verified first action from current Project World evidence.',
+    `${reality.gaps.length} unresolved reality gap${reality.gaps.length === 1 ? '' : 's'} mapped.`,
+    reality.completedDeliverables.length
+      ? `${reality.completedDeliverables.length} deliverable${reality.completedDeliverables.length === 1 ? '' : 's'} already evidenced and omitted from the route.`
+      : 'No requested deliverables were already evidenced.',
+    reality.blockers.length
+      ? `${reality.blockers.length} existing Project World blocker${reality.blockers.length === 1 ? '' : 's'} remain visible.`
+      : 'No existing Project World blockers were observed.',
+    blockedCapabilities.size
+      ? `Unavailable capabilities remain blocked: ${Array.from(blockedCapabilities).join(', ')}.`
+      : 'All planned capabilities are available.',
+  ].join(' ')
+
+  return {
+    reason,
+    nodes,
+    blockedCapabilities: Array.from(blockedCapabilities),
+    gaps: reality.gaps,
+    worldBlockers: reality.blockers,
+    source: 'project_world_dynamic_v0_3',
+  }
 }
