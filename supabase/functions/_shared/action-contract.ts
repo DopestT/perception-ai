@@ -28,6 +28,7 @@ export type GitHubActionContract = {
   repository: string | null
   target: string | null
   base_branch: string
+  base_sha: string | null
   working_branch: string
   desired_changes: string
   files_or_patch: GitHubFilesOrPatch | null
@@ -97,12 +98,14 @@ export function buildGitHubActionContract(input: {
   routeId?: string | null
   repository?: string | null
   baseBranch?: string
+  baseSha?: string | null
   filesOrPatch?: GitHubFilesOrPatch | null
   tests?: string[]
   permissionGrantId?: string | null
 }): GitHubActionContract {
   const baseBranch = input.baseBranch?.trim() || 'main'
   const repository = input.repository?.trim() || null
+  const baseSha = input.baseSha?.trim() || null
   const target = repository ? `github://${repository}@${baseBranch}` : null
   const objectiveSeed = input.objectiveId?.replace(/-/g, '').slice(0, 8)
     || input.projectId.replace(/-/g, '').slice(0, 8)
@@ -118,11 +121,12 @@ export function buildGitHubActionContract(input: {
   const missingFields: string[] = []
   if (!repository) missingFields.push('repository')
   if (!filesOrPatch) missingFields.push('files_or_patch')
+  if (filesOrPatch && !baseSha) missingFields.push('base_sha')
   if (permissionRequired && !permissionGrantId) missingFields.push('permission_grant')
 
   const status: GitHubActionContractStatus = !repository
     ? 'needs_source'
-    : !filesOrPatch
+    : !filesOrPatch || !baseSha
       ? 'needs_scope'
       : permissionRequired && !permissionGrantId
         ? 'awaiting_permission'
@@ -141,6 +145,7 @@ export function buildGitHubActionContract(input: {
     repository,
     target,
     base_branch: baseBranch,
+    base_sha: baseSha,
     working_branch: workingBranch,
     desired_changes: input.node.outcome,
     files_or_patch: filesOrPatch,
