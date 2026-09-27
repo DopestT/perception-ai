@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Clock3, Compass, KeyRound, LogOut, Mail, Search, Sparkles, X } from 'lucide-react'
+import { Check, Clock3, Compass, KeyRound, LogOut, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { ForecastPanel } from './ForecastPanel'
 import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPortal'
@@ -21,12 +21,14 @@ import {
   signInWithPassword,
   signUpWithPassword,
   runAutonomousForecast,
-  runPerceptionGitHubSelfTest,
+  executePerceptionGitHubSelfTest,
+  preparePerceptionGitHubSelfTest,
   signOut,
   submitObjective,
   supabase,
   type Forecast,
   type ForecastCalibration,
+  type GitHubOperatorSelfTestPlan,
   type ObjectiveRuntimeResult,
   type ProjectLedgers,
   type ProjectWorld,
@@ -144,6 +146,7 @@ function App() {
   const [attachingMarket, setAttachingMarket] = useState(false)
   const [runningIntelligence, setRunningIntelligence] = useState(false)
   const [runningOperatorTest, setRunningOperatorTest] = useState(false)
+  const [operatorPlan, setOperatorPlan] = useState<GitHubOperatorSelfTestPlan | null>(null)
   const [registeringPasskey, setRegisteringPasskey] = useState(false)
   const [marketNote, setMarketNote] = useState('')
   const [intelligenceNote, setIntelligenceNote] = useState('')
@@ -483,16 +486,39 @@ function App() {
     }
   }
 
-  const handleOperatorSelfTest = async () => {
+  const handlePrepareOperatorProof = async () => {
     if (runningOperatorTest || busy) return
     setRunningOperatorTest(true)
     setBusy(true)
     setError('')
-    setNotice('Running Perception\'s bounded GitHub self-test…')
+    setNotice('Materializing a bounded GitHub proof for review…')
     setPortalMode('charging')
 
     try {
-      const result = await runPerceptionGitHubSelfTest()
+      const plan = await preparePerceptionGitHubSelfTest()
+      setOperatorPlan(plan)
+      setPortalMode('focused')
+      setNotice('P1 planning verified. Review the exact P2 action contract before execution.')
+    } catch (cause) {
+      setPortalMode('focused')
+      setError(cause instanceof Error ? cause.message : 'Perception could not prepare the GitHub proof.')
+      setNotice('')
+    } finally {
+      setRunningOperatorTest(false)
+      setBusy(false)
+    }
+  }
+
+  const handleApproveOperatorProof = async () => {
+    if (!operatorPlan || runningOperatorTest || busy) return
+    setRunningOperatorTest(true)
+    setBusy(true)
+    setError('')
+    setNotice('Executing the approved bounded GitHub proof…')
+    setPortalMode('charging')
+
+    try {
+      const result = await executePerceptionGitHubSelfTest(operatorPlan)
       const [nextWorld, nextLedgers] = await Promise.all([
         getProjectWorld(result.project_id),
         getProjectLedgers(result.project_id),
@@ -500,15 +526,16 @@ function App() {
       setRuntimeResult(null)
       setWorld(nextWorld)
       setLedgers(nextLedgers)
+      setOperatorPlan(null)
       setPortalMode('transitioning')
       await delay(420)
       setPortalMode('idle')
       const commit = result.commit_sha ? result.commit_sha.slice(0, 8) : 'observed commit'
-      setNotice(`Operator proof verified: ${commit} on ${result.branch}. main was not modified.`)
+      setNotice(`Operator proof verified: ${commit} on ${result.branch}. main was not modified and the temporary P2 grant was revoked.`)
       window.setTimeout(() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
     } catch (cause) {
       setPortalMode('focused')
-      setError(cause instanceof Error ? cause.message : 'Perception could not complete the GitHub self-test.')
+      setError(cause instanceof Error ? cause.message : 'Perception could not complete the approved GitHub proof.')
       setNotice('')
     } finally {
       setRunningOperatorTest(false)
@@ -569,8 +596,8 @@ function App() {
         </button>
         {session ? (
           <div className="account-actions">
-            <button className="quiet-action" type="button" onClick={handleOperatorSelfTest} disabled={runningOperatorTest || busy}>
-              {runningOperatorTest ? 'OPERATOR RUNNING…' : 'RUN OPERATOR PROOF'}
+            <button className="quiet-action" type="button" onClick={handlePrepareOperatorProof} disabled={runningOperatorTest || busy}>
+              {runningOperatorTest ? 'PREPARING…' : 'PREPARE OPERATOR PROOF'}
             </button>
             <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth' })}>PROJECT WORLD</button>
             <button className="quiet-action" type="button" onClick={handleRegisterPasskey} disabled={registeringPasskey}>
@@ -783,6 +810,42 @@ function App() {
         <section className="empty-world">
           <p>Signed in. Your first idea will create a durable Project World.</p>
         </section>
+      )}
+
+      {operatorPlan && (
+        <div className="approval-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !runningOperatorTest) setOperatorPlan(null)
+        }}>
+          <section className="approval-card" role="dialog" aria-modal="true" aria-labelledby="operator-approval-title">
+            <button className="auth-close" type="button" onClick={() => setOperatorPlan(null)} disabled={runningOperatorTest} aria-label="Cancel approval"><X size={18} /></button>
+            <div className="approval-icon"><ShieldCheck size={18} /></div>
+            <p className="section-kicker">P2 · EXPLICIT APPROVAL</p>
+            <h2 id="operator-approval-title">Review the exact GitHub change.</h2>
+            <p className="approval-intro">P1 has only inspected and planned. No GitHub write permission has been granted yet.</p>
+
+            <div className="approval-grid">
+              <div><span>REPOSITORY</span><strong>{operatorPlan.contract.repository}</strong></div>
+              <div><span>BASE</span><strong>{operatorPlan.contract.base_branch} · {operatorPlan.contract.base_sha?.slice(0, 10)}</strong></div>
+              <div className="approval-wide"><span>WORKING BRANCH</span><strong>{operatorPlan.contract.working_branch}</strong></div>
+              <div className="approval-wide"><span>PLANNED FILES</span><strong>{operatorPlan.files.map((file) => file.path).join(', ')}</strong></div>
+              <div className="approval-wide"><span>TESTS</span><strong>{operatorPlan.contract.tests.join(' · ') || 'Bounded scope and independent GitHub observation'}</strong></div>
+              <div><span>PERMISSION</span><strong>{operatorPlan.contract.permission.level} · temporary</strong></div>
+              <div><span>ROLLBACK</span><strong>Delete working branch</strong></div>
+            </div>
+
+            <div className="approval-guardrail">
+              <ShieldCheck size={14} />
+              <span>If {operatorPlan.contract.base_branch} no longer matches the pinned commit, execution stops and Perception must rematerialize the plan.</span>
+            </div>
+
+            <div className="approval-actions">
+              <button type="button" className="approval-cancel" onClick={() => setOperatorPlan(null)} disabled={runningOperatorTest}>CANCEL</button>
+              <button type="button" className="approval-run" onClick={handleApproveOperatorProof} disabled={runningOperatorTest}>
+                {runningOperatorTest ? 'EXECUTING…' : 'APPROVE P2 & RUN PROOF'}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
 
       {authOpen && (
