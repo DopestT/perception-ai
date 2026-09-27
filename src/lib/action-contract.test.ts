@@ -51,6 +51,7 @@ describe('GitHub action contract resolver', () => {
     expect(contract.target).toBe('github://DopestT/perception-ai@main')
     expect(contract.working_branch).toBe('perception/12345678/explicit-external-action')
     expect(contract.status).toBe('needs_scope')
+    expect(contract.base_sha).toBeNull()
     expect(contract.files_or_patch).toBeNull()
     expect(contract.permission.status).toBe('required')
     expect(contract.missing_fields).toEqual(expect.arrayContaining(['files_or_patch', 'permission_grant']))
@@ -64,6 +65,7 @@ describe('GitHub action contract resolver', () => {
       projectId: '28f16856-6570-48fc-b563-44f6bc28f6b5',
       objectiveId: '12345678-1234-1234-1234-123456789abc',
       repository: 'DopestT/perception-ai',
+      baseSha: '1111111111111111111111111111111111111111',
       filesOrPatch: {
         kind: 'files',
         files: [{ path: 'docs/example.md', content: '# verified\n' }],
@@ -71,6 +73,7 @@ describe('GitHub action contract resolver', () => {
       permissionGrantId: 'grant-1',
     })
 
+    expect(contract.base_sha).toBe('1111111111111111111111111111111111111111')
     expect(contract.status).toBe('ready')
     expect(contract.missing_fields).toEqual([])
     expect(contract.permission.status).toBe('active')
