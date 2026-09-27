@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   findUnexpectedChangedFiles,
   validateExistingBranchForReuse,
+  validateExpectedBaseSha,
   validateGitHubExecutionRequest,
 } from '../../supabase/functions/_shared/github-executor'
 
@@ -41,6 +42,21 @@ describe('GitHub executor boundary', () => {
   it('blocks repository path traversal', () => {
     const input = { ...valid, files: [{ path: '../secret', content: 'no' }] }
     expect(validateGitHubExecutionRequest(input).join(' ')).toContain('inside the repository')
+  })
+
+  it('blocks execution when the base branch moved after planning', () => {
+    expect(
+      validateExpectedBaseSha(
+        '1111111111111111111111111111111111111111',
+        '2222222222222222222222222222222222222222',
+      ).join(' '),
+    ).toContain('Rematerialize before execution')
+    expect(
+      validateExpectedBaseSha(
+        '1111111111111111111111111111111111111111',
+        '1111111111111111111111111111111111111111',
+      ),
+    ).toEqual([])
   })
 
   it('allows an existing ahead branch when changes stay inside the planned file set', () => {
