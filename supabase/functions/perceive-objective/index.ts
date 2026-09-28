@@ -1,6 +1,6 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { governTask, routeModelTargets, type ModelPrice, type ModelProtocol, type ModelTarget } from '../_shared/token-efficiency.ts'
-import { resolveObjectiveMeaning } from '../_shared/meaning-resolver.ts'
+import { deterministicMeaning, resolveObjectiveMeaning, type ResolvedObjectiveMeaning } from '../_shared/meaning-resolver.ts'
 import { planDynamicRealityRoute } from '../_shared/reality-planner.ts'
 import { mapProjectReality, type ProjectRealitySnapshot } from '../_shared/reality-mapper.ts'
 import { routePlannedCapabilities } from '../_shared/capability-router.ts'
@@ -22,6 +22,75 @@ const json = (body: unknown, status = 200) =>
 
 function leftText(value: string, limit: number): string {
   return value.length <= limit ? value : value.slice(0, limit)
+}
+
+type ResumeObjectiveRow = {
+  id: string
+  project_id: string
+  statement: string
+  desired_reality: string
+  current_reality: string
+  constraints: unknown
+  success_criteria: unknown
+  deliverables: unknown
+  known_unknowns: unknown
+  urgency: string
+  meaning: unknown
+  meaning_source: string | null
+  meaning_confidence: number | null
+}
+
+function stringArray(value: unknown, limit = 12): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, limit)
+}
+
+function storedObjectiveMeaning(row: ResumeObjectiveRow): ResolvedObjectiveMeaning {
+  const fallback = deterministicMeaning(row.statement)
+  const stored = row.meaning && typeof row.meaning === 'object' && !Array.isArray(row.meaning)
+    ? row.meaning as Record<string, unknown>
+    : {}
+  const urgency = ['low', 'normal', 'high', 'critical'].includes(row.urgency)
+    ? row.urgency as ResolvedObjectiveMeaning['urgency']
+    : fallback.urgency
+  const inferredClaims = Array.isArray(stored.inferred_claims)
+    ? stored.inferred_claims
+        .filter((claim): claim is Record<string, unknown> => Boolean(claim && typeof claim === 'object' && !Array.isArray(claim)))
+        .map((claim) => ({
+          claim_key: typeof claim.claim_key === 'string' ? claim.claim_key.trim().slice(0, 160) : '',
+          statement: typeof claim.statement === 'string' ? claim.statement.trim().slice(0, 2000) : '',
+          confidence: typeof claim.confidence === 'number' && Number.isFinite(claim.confidence)
+            ? Math.max(0, Math.min(1, claim.confidence))
+            : 0.5,
+          route_impact: typeof claim.route_impact === 'string' ? claim.route_impact.trim().slice(0, 1000) : '',
+        }))
+        .filter((claim) => claim.claim_key && claim.statement)
+        .slice(0, 12)
+    : []
+
+  return {
+    ...fallback,
+    desired_reality: row.desired_reality || fallback.desired_reality,
+    current_reality: row.current_reality || fallback.current_reality,
+    constraints: stringArray(row.constraints),
+    success_criteria: stringArray(row.success_criteria),
+    deliverables: stringArray(row.deliverables),
+    urgency,
+    known_unknowns: stringArray(row.known_unknowns),
+    inferred_claims: inferredClaims,
+    confidence: typeof row.meaning_confidence === 'number' && Number.isFinite(row.meaning_confidence)
+      ? Math.max(0, Math.min(1, row.meaning_confidence))
+      : fallback.confidence,
+    source: row.meaning_source === 'openai' ? 'openai' : 'deterministic_fallback',
+    provider: null,
+    model: null,
+    routing_attempts: [],
+    usage: undefined,
+  }
 }
 
 function numericEnv(name: string, fallback = 0): number {
@@ -147,14 +216,103 @@ Deno.serve(async (req: Request) => {
     const { data: userData, error: userError } = await userClient.auth.getUser(token)
     if (userError || !userData.user) return json({ error: 'Invalid session' }, 401)
 
-    const payload = await req.json().catch(() => null) as { statement?: unknown } | null
-    const statement = typeof payload?.statement === 'string' ? payload.statement.trim() : ''
-    if (statement.length < 3) return json({ error: 'Objective must contain at least 3 characters' }, 400)
-    if (statement.length > 10000) return json({ error: 'Objective is too long' }, 413)
+    const payload = await req.json().catch(() => null) as {
+      statement?: unknown
+      action?: unknown
+      project_id?: unknown
+      objective_id?: unknown
+    } | null
+    const action = payload?.action === 'resume' ? 'resume' : 'submit'
+    const requestedProjectId = typeof payload?.project_id === 'string' ? payload.project_id.trim() : ''
+    const requestedObjectiveId = typeof payload?.objective_id === 'string' ? payload.objective_id.trim() : ''
+    let statement = typeof payload?.statement === 'string' ? payload.statement.trim() : ''
+
+    if (action === 'submit') {
+      if (statement.length < 3) return json({ error: 'Objective must contain at least 3 characters' }, 400)
+      if (statement.length > 10000) return json({ error: 'Objective is too long' }, 413)
+    } else if (!requestedProjectId && !requestedObjectiveId) {
+      return json({ error: 'Resume requires project_id or objective_id' }, 400)
+    }
 
     const admin = createClient(url, secretKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     })
+
+    const failLocalWorker = async (
+      workerRunId: string,
+      leaseToken: string,
+      failureCode: string,
+      failureText: string,
+      retryDelaySeconds = 30,
+    ) => {
+      const failureCall = await admin.rpc('perception_fail_local_worker_internal', {
+        p_worker_run_id: workerRunId,
+        p_lease_token: leaseToken,
+        p_failure_code: failureCode,
+        p_failure_text: leftText(failureText, 2000),
+        p_retry_delay_seconds: retryDelaySeconds,
+      })
+      if (failureCall.error) {
+        console.error('Perception local worker failure persistence failed', {
+          code: failureCall.error.code,
+          message: failureCall.error.message,
+          worker_run_id: workerRunId,
+        })
+      }
+    }
+
+    let resumeObjective: ResumeObjectiveRow | null = null
+    if (action === 'resume') {
+      const objectiveColumns = [
+        'id',
+        'project_id',
+        'statement',
+        'desired_reality',
+        'current_reality',
+        'constraints',
+        'success_criteria',
+        'deliverables',
+        'known_unknowns',
+        'urgency',
+        'meaning',
+        'meaning_source',
+        'meaning_confidence',
+      ].join(',')
+
+      const objectiveResult = requestedObjectiveId
+        ? await admin
+            .from('perception_objectives')
+            .select(objectiveColumns)
+            .eq('id', requestedObjectiveId)
+            .eq('user_id', userData.user.id)
+            .maybeSingle()
+        : await admin
+            .from('perception_objectives')
+            .select(objectiveColumns)
+            .eq('project_id', requestedProjectId)
+            .eq('user_id', userData.user.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+      if (objectiveResult.error) {
+        console.error('Perception resume objective lookup failed', {
+          code: objectiveResult.error.code,
+          message: objectiveResult.error.message,
+        })
+        return json({ error: 'Could not load the objective to resume' }, 500)
+      }
+
+      if (!objectiveResult.data) return json({ error: 'Objective to resume was not found' }, 404)
+
+      resumeObjective = objectiveResult.data as unknown as ResumeObjectiveRow
+      if (requestedProjectId && resumeObjective.project_id !== requestedProjectId) {
+        return json({ error: 'Objective does not belong to the requested project' }, 400)
+      }
+
+      statement = resumeObjective.statement.trim()
+      if (statement.length < 3) return json({ error: 'Stored objective is not resumable' }, 409)
+    }
 
     const { data: policy } = await admin
       .from('perception_token_policies')
@@ -200,10 +358,12 @@ Deno.serve(async (req: Request) => {
       budgetPressure,
     })
 
-    const meaning = await resolveObjectiveMeaning(statement, {
-      candidates: modelRoute.candidates,
-      maxOutputTokens: tokenDecision.maxOutputTokens,
-    })
+    const meaning = resumeObjective
+      ? storedObjectiveMeaning(resumeObjective)
+      : await resolveObjectiveMeaning(statement, {
+          candidates: modelRoute.candidates,
+          maxOutputTokens: tokenDecision.maxOutputTokens,
+        })
 
     const runtimeCapabilities = ['reason', 'generate', 'verify'] as const
     const operatorCapabilities = ((Deno.env.get('PERCEPTION_OPERATOR_CAPABILITIES') || Deno.env.get('PERCEPTION_OPERATOR_CAPIBILITIES')) ?? '')
@@ -230,40 +390,75 @@ Deno.serve(async (req: Request) => {
         .includes(capability)
     ) as Array<'reason' | 'research' | 'retrieve' | 'generate' | 'edit' | 'code' | 'communicate' | 'schedule' | 'calculate' | 'verify'>
 
-    let runtimeData: unknown
-    let runtimeError: { code?: string; message?: string } | null = null
+    let runtimeResult: Record<string, unknown> = {}
 
-    // Establish a verified first Project World state before mapping the continuation route.
-    // This prevents pre-Project heuristics from being mistaken for observed reality.
-    const resolvedCall = await admin.rpc('perception_submit_resolved_objective_internal', {
-      p_user_id: userData.user.id,
-      p_statement: statement,
-      p_semantics: meaning,
-    })
+    if (resumeObjective) {
+      const { data: resumeRoute, error: resumeRouteError } = await admin
+        .from('perception_routes')
+        .select('id, version, active')
+        .eq('user_id', userData.user.id)
+        .eq('project_id', resumeObjective.project_id)
+        .eq('objective_id', resumeObjective.id)
+        .order('active', { ascending: false })
+        .order('version', { ascending: false })
+        .limit(1)
+        .maybeSingle()
 
-    runtimeData = resolvedCall.data
-    runtimeError = resolvedCall.error
+      if (resumeRouteError) {
+        console.error('Perception resume route lookup failed', {
+          code: resumeRouteError.code,
+          message: resumeRouteError.message,
+        })
+        return json({ error: 'Could not load the route to resume' }, 500)
+      }
 
-    if (runtimeError?.code === 'PGRST202' || runtimeError?.code === '42883') {
-      const fallbackCall = await admin.rpc('perception_submit_objective_internal', {
+      if (!resumeRoute?.id) return json({ error: 'Stored objective has no resumable route' }, 409)
+
+      runtimeResult = {
+        ok: true,
+        stages: ['UNDERSTOOD', 'PROJECT WORLD CREATED', 'REALITY ROUTE CREATED'],
+        project_id: resumeObjective.project_id,
+        objective_id: resumeObjective.id,
+        route_id: resumeRoute.id,
+        resumed: true,
+      }
+    } else {
+      let runtimeData: unknown
+      let runtimeError: { code?: string; message?: string } | null = null
+
+      // Establish a verified first Project World state before mapping the continuation route.
+      // This prevents pre-Project heuristics from being mistaken for observed reality.
+      const resolvedCall = await admin.rpc('perception_submit_resolved_objective_internal', {
         p_user_id: userData.user.id,
         p_statement: statement,
+        p_semantics: meaning,
       })
-      runtimeData = fallbackCall.data
-      runtimeError = fallbackCall.error
+
+      runtimeData = resolvedCall.data
+      runtimeError = resolvedCall.error
+
+      if (runtimeError?.code === 'PGRST202' || runtimeError?.code === '42883') {
+        const fallbackCall = await admin.rpc('perception_submit_objective_internal', {
+          p_user_id: userData.user.id,
+          p_statement: statement,
+        })
+        runtimeData = fallbackCall.data
+        runtimeError = fallbackCall.error
+      }
+
+      if (runtimeError) {
+        console.error('Perception objective runtime failed', {
+          code: runtimeError.code,
+          message: runtimeError.message,
+        })
+        return json({ error: 'Objective runtime failed' }, 500)
+      }
+
+      runtimeResult = runtimeData && typeof runtimeData === 'object' && !Array.isArray(runtimeData)
+        ? runtimeData as Record<string, unknown>
+        : {}
     }
 
-    if (runtimeError) {
-      console.error('Perception objective runtime failed', {
-        code: runtimeError.code,
-        message: runtimeError.message,
-      })
-      return json({ error: 'Objective runtime failed' }, 500)
-    }
-
-    let runtimeResult = runtimeData && typeof runtimeData === 'object' && !Array.isArray(runtimeData)
-      ? runtimeData as Record<string, unknown>
-      : {}
     const projectId = typeof runtimeResult.project_id === 'string' ? runtimeResult.project_id : null
     const objectiveId = typeof runtimeResult.objective_id === 'string' ? runtimeResult.objective_id : null
     const routeId = typeof runtimeResult.route_id === 'string' ? runtimeResult.route_id : null
@@ -357,7 +552,7 @@ Deno.serve(async (req: Request) => {
       availableCapabilities: plannerCapabilities,
     })
 
-    if (projectId && objectiveId && routeId) {
+    if (!resumeObjective && projectId && objectiveId && routeId) {
       const dynamicRouteCall = await admin.rpc('perception_apply_dynamic_route_internal', {
         p_user_id: userData.user.id,
         p_project_id: projectId,
@@ -432,53 +627,64 @@ Deno.serve(async (req: Request) => {
               continue
             }
 
-            await admin
-              .from('perception_route_nodes')
-              .update({ status: 'running', blocker: null, updated_at: new Date().toISOString() })
-              .eq('id', persistedNode.id)
-              .eq('user_id', userData.user.id)
+            const leaseToken = crypto.randomUUID()
+            const workerInput = {
+              objective_id: objectiveId,
+              objective: statement,
+              desired_reality: meaning.desired_reality,
+              current_reality: realityMap.currentReality,
+              planned_outcome: plannedNode.outcome,
+              route_id: activeRouteId,
+            }
+            const claimCall = await admin.rpc('perception_claim_local_node_internal', {
+              p_user_id: userData.user.id,
+              p_project_id: projectId,
+              p_objective_id: objectiveId,
+              p_route_id: activeRouteId,
+              p_route_node_id: persistedNode.id,
+              p_worker_key: 'local_generate_worker_v1',
+              p_input: workerInput,
+              p_lease_token: leaseToken,
+              p_lease_seconds: 600,
+              p_max_attempts: 3,
+            })
 
-            const { data: worker, error: workerError } = await admin
-              .from('perception_worker_runs')
-              .insert({
-                user_id: userData.user.id,
-                project_id: projectId,
-                route_node_id: persistedNode.id,
-                worker_key: 'local_generate_worker_v1',
-                capability: 'generate',
-                permission_level: plannedNode.permissionLevel,
-                status: 'running',
-                input: {
-                  objective_id: objectiveId,
-                  objective: statement,
-                  desired_reality: meaning.desired_reality,
-                  current_reality: realityMap.currentReality,
-                  planned_outcome: plannedNode.outcome,
-                  route_id: activeRouteId,
-                },
-                evidence: [],
-                started_at: new Date().toISOString(),
-              })
-              .select('id')
-              .single()
-
-            if (workerError || !worker?.id) {
-              await admin
-                .from('perception_route_nodes')
-                .update({
-                  status: 'failed',
-                  blocker: leftText(workerError?.message || 'Local worker could not be persisted.', 1000),
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('id', persistedNode.id)
+            if (claimCall.error || !claimCall.data || typeof claimCall.data !== 'object') {
               localExecutions.push({
                 node_key: plannedNode.key,
                 ok: false,
-                phase: 'failed',
-                failures: [workerError?.message || 'Local worker could not be persisted.'],
+                phase: 'blocked',
+                failures: [claimCall.error?.message || 'Local worker claim failed.'],
               })
               continue
             }
+
+            const claim = claimCall.data as Record<string, unknown>
+            if (claim.claimed !== true) {
+              const reason = typeof claim.reason === 'string' ? claim.reason : 'not_claimed'
+              localExecutions.push({
+                node_key: plannedNode.key,
+                worker_run_id: typeof claim.worker_run_id === 'string' ? claim.worker_run_id : undefined,
+                artifact_id: typeof claim.output_artifact_id === 'string' ? claim.output_artifact_id : undefined,
+                ok: reason === 'already_succeeded' || reason === 'already_completed',
+                phase: reason,
+                retry_after: claim.retry_after,
+                lease_expires_at: claim.lease_expires_at,
+              })
+              continue
+            }
+
+            const workerId = typeof claim.worker_run_id === 'string' ? claim.worker_run_id : ''
+            if (!workerId) {
+              localExecutions.push({
+                node_key: plannedNode.key,
+                ok: false,
+                phase: 'blocked',
+                failures: ['Local worker claim returned no worker id.'],
+              })
+              continue
+            }
+            const worker = { id: workerId }
 
             const localDecision = governTask({
               statement: plannedNode.outcome,
@@ -576,27 +782,13 @@ Deno.serve(async (req: Request) => {
                   },
                 })
 
-              await admin
-                .from('perception_worker_runs')
-                .update({
-                  status: 'failed',
-                  evidence: [
-                    ...materialized.evidence,
-                    ...verification.evidence,
-                    ...failures.map((failure) => ({ kind: 'failure', failure })),
-                  ],
-                  finished_at: new Date().toISOString(),
-                })
-                .eq('id', worker.id)
-
-              await admin
-                .from('perception_route_nodes')
-                .update({
-                  status: 'failed',
-                  blocker: leftText(failures.join(' '), 1000),
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('id', persistedNode.id)
+              await failLocalWorker(
+                worker.id,
+                leaseToken,
+                'verification_failed',
+                failures.join(' '),
+                30,
+              )
 
               localExecutions.push({
                 node_key: plannedNode.key,
@@ -631,22 +823,13 @@ Deno.serve(async (req: Request) => {
               .single()
 
             if (artifactError || !artifact?.id) {
-              await admin
-                .from('perception_worker_runs')
-                .update({
-                  status: 'failed',
-                  evidence: [{ kind: 'failure', failure: artifactError?.message || 'Artifact persistence failed.' }],
-                  finished_at: new Date().toISOString(),
-                })
-                .eq('id', worker.id)
-              await admin
-                .from('perception_route_nodes')
-                .update({
-                  status: 'failed',
-                  blocker: leftText(artifactError?.message || 'Artifact persistence failed.', 1000),
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('id', persistedNode.id)
+              await failLocalWorker(
+                worker.id,
+                leaseToken,
+                'artifact_persistence_failed',
+                artifactError?.message || 'Artifact persistence failed.',
+                30,
+              )
               localExecutions.push({
                 node_key: plannedNode.key,
                 worker_run_id: worker.id,
@@ -686,22 +869,13 @@ Deno.serve(async (req: Request) => {
               .single()
 
             if (verificationError || !verificationRun?.id) {
-              await admin
-                .from('perception_worker_runs')
-                .update({
-                  status: 'failed',
-                  evidence: [{ kind: 'failure', failure: verificationError?.message || 'Verification persistence failed.' }],
-                  finished_at: new Date().toISOString(),
-                })
-                .eq('id', worker.id)
-              await admin
-                .from('perception_route_nodes')
-                .update({
-                  status: 'failed',
-                  blocker: leftText(verificationError?.message || 'Verification persistence failed.', 1000),
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('id', persistedNode.id)
+              await failLocalWorker(
+                worker.id,
+                leaseToken,
+                'verification_persistence_failed',
+                verificationError?.message || 'Verification persistence failed.',
+                30,
+              )
               localExecutions.push({
                 node_key: plannedNode.key,
                 worker_run_id: worker.id,
@@ -714,37 +888,26 @@ Deno.serve(async (req: Request) => {
             }
 
             const verifiedSummary = `Verified bounded artifact created for: ${plannedNode.outcome}`
-            const applyCall = await admin.rpc('perception_apply_verified_local_effect_internal', {
+            const applyCall = await admin.rpc('perception_apply_verified_local_effect_leased_internal', {
               p_user_id: userData.user.id,
               p_project_id: projectId,
               p_objective_id: objectiveId,
               p_route_node_id: persistedNode.id,
               p_worker_run_id: worker.id,
+              p_lease_token: leaseToken,
               p_artifact_id: artifact.id,
               p_summary: verifiedSummary,
               p_evidence: verificationEvidence,
             })
 
             if (applyCall.error) {
-              await admin
-                .from('perception_worker_runs')
-                .update({
-                  status: 'failed',
-                  evidence: [
-                    ...verificationEvidence,
-                    { kind: 'failure', failure: applyCall.error.message },
-                  ],
-                  finished_at: new Date().toISOString(),
-                })
-                .eq('id', worker.id)
-              await admin
-                .from('perception_route_nodes')
-                .update({
-                  status: 'failed',
-                  blocker: leftText(applyCall.error.message, 1000),
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('id', persistedNode.id)
+              await failLocalWorker(
+                worker.id,
+                leaseToken,
+                'verified_effect_apply_failed',
+                applyCall.error.message,
+                30,
+              )
               localExecutions.push({
                 node_key: plannedNode.key,
                 worker_run_id: worker.id,
@@ -1497,6 +1660,11 @@ Deno.serve(async (req: Request) => {
         active_route_id: activeRouteId,
       },
       code_plan_materializations: codePlanMaterializations,
+      continuation: {
+        resumed: Boolean(resumeObjective),
+        reused_existing_route: Boolean(resumeObjective && routeId),
+        active_route_id: activeRouteId,
+      },
       token_control: {
         enabled: costControlEnabled,
         budget_tier: tokenDecision.tier,
