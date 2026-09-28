@@ -78,6 +78,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/023_runtime_v02_continuation_route.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/029_dynamic_reality_route.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/030_local_execution_truth_bridge.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/031_runtime_v05_reliable_continuation.sql
 
       - name: Run Runtime v0.2 security and truth assertions
         run: |

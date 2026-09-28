@@ -346,6 +346,13 @@ export type ObjectiveRuntimeResult = {
   artifact_id?: string
   verification_id?: string
   stage?: string
+  resumed?: boolean
+  continuation?: {
+    resumed: boolean
+    reused_existing_route: boolean
+    active_route_id: string | null
+  }
+  local_executions?: Array<Record<string, unknown>>
   action_contracts?: GitHubActionContract[]
 }
 
@@ -484,6 +491,20 @@ export async function submitObjective(statement: string): Promise<ObjectiveRunti
   })
   if (error) throw error
   if (!data) throw new Error('Perception runtime returned no result.')
+  return data
+}
+
+export async function resumeObjective(projectId: string, objectiveId?: string): Promise<ObjectiveRuntimeResult> {
+  const client = requireBackend()
+  const { data, error } = await client.functions.invoke<ObjectiveRuntimeResult>('perceive-objective', {
+    body: {
+      action: 'resume',
+      project_id: projectId,
+      objective_id: objectiveId,
+    },
+  })
+  if (error) throw error
+  if (!data) throw new Error('Perception continuation returned no result.')
   return data
 }
 
