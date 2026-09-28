@@ -958,6 +958,24 @@ function App() {
 
                 {authMode !== 'magic' ? (
                   <>
+                    <div className="auth-provider-stack" aria-label="Modern sign-in methods">
+                      <button className="auth-provider" type="button" onClick={handlePasskeySignIn} disabled={authBusy}>
+                        <KeyRound size={17} />
+                        <span>{authBusy ? 'WORKING…' : 'CONTINUE WITH PASSKEY'}</span>
+                        <span aria-hidden="true" />
+                      </button>
+                      <button className="auth-provider" type="button" onClick={() => handleOAuthSignIn('google')} disabled={authBusy}>
+                        <span className="auth-provider-mark" aria-hidden="true">G</span>
+                        <span>CONTINUE WITH GOOGLE</span>
+                        <span aria-hidden="true" />
+                      </button>
+                      <button className="auth-provider" type="button" onClick={() => handleOAuthSignIn('apple')} disabled={authBusy}>
+                        <span className="auth-provider-mark" aria-hidden="true">A</span>
+                        <span>CONTINUE WITH APPLE</span>
+                        <span aria-hidden="true" />
+                      </button>
+                    </div>
+                    <div className="auth-divider">OR CONTINUE WITH EMAIL</div>
                     <div className="auth-mode-switch" role="tablist" aria-label="Email authentication mode">
                       <button type="button" className={authMode === 'signin' ? 'auth-mode-tab auth-mode-tab--active' : 'auth-mode-tab'} onClick={() => setAuthMode('signin')}>SIGN IN</button>
                       <button type="button" className={authMode === 'signup' ? 'auth-mode-tab auth-mode-tab--active' : 'auth-mode-tab'} onClick={() => setAuthMode('signup')}>CREATE ACCOUNT</button>
