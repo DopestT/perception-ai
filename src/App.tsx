@@ -17,6 +17,7 @@ import {
   requestEmailSignIn,
   registerPasskey,
   resolveForecast,
+  resumeObjective,
   signInWithOAuthProvider,
   signInWithPasskey,
   signInWithPassword,
@@ -148,6 +149,7 @@ function App() {
   const [attachingMarket, setAttachingMarket] = useState(false)
   const [runningIntelligence, setRunningIntelligence] = useState(false)
   const [runningOperatorTest, setRunningOperatorTest] = useState(false)
+  const [continuingRoute, setContinuingRoute] = useState(false)
   const [operatorPlan, setOperatorPlan] = useState<GitHubOperatorSelfTestPlan | null>(null)
   const [registeringPasskey, setRegisteringPasskey] = useState(false)
   const [marketNote, setMarketNote] = useState('')
@@ -224,6 +226,58 @@ function App() {
       setBusy(false)
     }
   }, [])
+
+  const handleContinueRoute = useCallback(async () => {
+    if (!world || busy || continuingRoute) return
+    const objective = world.objectives.at(-1)
+    if (!objective?.id) {
+      setError('No objective is available to continue.')
+      return
+    }
+
+    setContinuingRoute(true)
+    setBusy(true)
+    setError('')
+    setNotice('')
+    setPortalMode('charging')
+
+    try {
+      const request = resumeObjective(world.project.id, objective.id)
+      await delay(220)
+      setPortalMode('absorbing')
+      const result = await request
+      if (!result.ok || !result.project_id) throw new Error(result.stage || 'Perception could not continue this route.')
+
+      const [nextWorld, nextLedgers] = await Promise.all([
+        getProjectWorld(result.project_id),
+        getProjectLedgers(result.project_id),
+      ])
+      setRuntimeResult(result)
+      setWorld(nextWorld)
+      setLedgers(nextLedgers)
+      setPortalMode('transitioning')
+      await delay(420)
+      setPortalMode('idle')
+
+      const execution = result.local_executions?.at(-1)
+      const phase = execution && typeof execution.phase === 'string' ? execution.phase : null
+      if (phase === 'in_progress') {
+        setNotice('This route already has an active leased worker. Perception did not start a duplicate.')
+      } else if (phase === 'retry_wait') {
+        setNotice('The previous attempt is inside its bounded retry window. Perception did not duplicate the work.')
+      } else if (phase === 'retry_exhausted') {
+        setNotice('This route reached its bounded retry limit. The failure remains explicit in Project World.')
+      } else {
+        setNotice('Perception continued the existing Project World and verified the next bounded work it could safely complete.')
+      }
+    } catch (cause) {
+      setPortalMode('focused')
+      setError(cause instanceof Error ? cause.message : 'Perception could not continue this route.')
+    } finally {
+      setContinuingRoute(false)
+      setBusy(false)
+    }
+  }, [busy, continuingRoute, world])
 
   const processForecast = useCallback(async (question: string, deadline: string) => {
     if (resumeInFlight.current) return
@@ -726,7 +780,14 @@ function App() {
               <h1>{world.project.name || 'Your idea is in motion.'}</h1>
               <p>{world.project.current_reality || 'Perception has established the first durable project state.'}</p>
             </div>
-            <div className="world-status"><strong>{completedStages.size}/7</strong><span>verified stages</span></div>
+            <div className="world-heading-actions">
+              <div className="world-status"><strong>{completedStages.size}/7</strong><span>verified stages</span></div>
+              {!forecast && world.objectives.at(-1) && !['realized', 'superseded'].includes(world.objectives.at(-1)?.status || '') && (
+                <button className="continue-route" type="button" onClick={handleContinueRoute} disabled={busy || continuingRoute}>
+                  {continuingRoute ? 'CONTINUING…' : 'CONTINUE ROUTE'}
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="stage-strip" aria-label="Perception verified runtime">
