@@ -6,6 +6,7 @@ import { mapProjectReality, type ProjectRealitySnapshot } from '../_shared/reali
 import { routePlannedCapabilities } from '../_shared/capability-router.ts'
 import { buildGitHubActionContract, repositoryFromGitHubLocator } from '../_shared/action-contract.ts'
 import { materializeGitHubCodePlan, type GitHubCodePlanResult } from '../_shared/code-plan-materializer.ts'
+import { materializeLocalArtifact, verifyLocalArtifact } from '../_shared/local-runtime.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -18,6 +19,10 @@ const json = (body: unknown, status = 200) =>
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
+
+function leftText(value: string, limit: number): string {
+  return value.length <= limit ? value : value.slice(0, limit)
+}
 
 function numericEnv(name: string, fallback = 0): number {
   const value = Number(Deno.env.get(name) ?? '')
@@ -347,8 +352,8 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    const realityMap = mapProjectReality(plannerMeaning, realitySnapshot)
-    const routePlan = planDynamicRealityRoute(plannerMeaning, realityMap, {
+    let realityMap = mapProjectReality(plannerMeaning, realitySnapshot)
+    let routePlan = planDynamicRealityRoute(plannerMeaning, realityMap, {
       availableCapabilities: plannerCapabilities,
     })
 
@@ -380,7 +385,542 @@ Deno.serve(async (req: Request) => {
     const continuationRouteId = typeof runtimeResult.continuation_route_id === 'string'
       ? runtimeResult.continuation_route_id
       : null
-    const activeRouteId = continuationRouteId ?? routeId
+    let activeRouteId = continuationRouteId ?? routeId
+    const localExecutions: Array<Record<string, unknown>> = []
+
+    if (projectId && objectiveId && activeRouteId) {
+      const readyLocalNodes = routePlan.nodes
+        .filter((node) =>
+          node.status === 'ready'
+          && (node.permissionLevel === 'P0' || node.permissionLevel === 'P1')
+          && node.capability === 'generate'
+        )
+        .slice(0, 4)
+
+      if (readyLocalNodes.length > 0) {
+        const { data: persistedLocalNodes, error: persistedLocalNodesError } = await admin
+          .from('perception_route_nodes')
+          .select('id, label, outcome, capability, permission_level, status')
+          .eq('project_id', projectId)
+          .eq('route_id', activeRouteId)
+          .in('capability', ['generate', 'verify'])
+          .order('sort_order', { ascending: true })
+
+        if (persistedLocalNodesError) {
+          console.error('Perception local execution route-node lookup failed', {
+            code: persistedLocalNodesError.code,
+            message: persistedLocalNodesError.message,
+          })
+        } else {
+          for (const plannedNode of readyLocalNodes) {
+            const persistedNode = (persistedLocalNodes ?? []).find((candidate) =>
+              candidate.capability === plannedNode.capability
+              && candidate.label === plannedNode.label
+              && candidate.outcome === plannedNode.outcome
+            ) ?? (persistedLocalNodes ?? []).find((candidate) =>
+              candidate.capability === plannedNode.capability
+              && candidate.label === plannedNode.label
+            )
+
+            if (!persistedNode?.id) {
+              localExecutions.push({
+                node_key: plannedNode.key,
+                ok: false,
+                phase: 'blocked',
+                failures: ['Persisted local route node could not be resolved.'],
+              })
+              continue
+            }
+
+            await admin
+              .from('perception_route_nodes')
+              .update({ status: 'running', blocker: null, updated_at: new Date().toISOString() })
+              .eq('id', persistedNode.id)
+              .eq('user_id', userData.user.id)
+
+            const { data: worker, error: workerError } = await admin
+              .from('perception_worker_runs')
+              .insert({
+                user_id: userData.user.id,
+                project_id: projectId,
+                route_node_id: persistedNode.id,
+                worker_key: 'local_generate_worker_v1',
+                capability: 'generate',
+                permission_level: plannedNode.permissionLevel,
+                status: 'running',
+                input: {
+                  objective_id: objectiveId,
+                  objective: statement,
+                  desired_reality: meaning.desired_reality,
+                  current_reality: realityMap.currentReality,
+                  planned_outcome: plannedNode.outcome,
+                  route_id: activeRouteId,
+                },
+                evidence: [],
+                started_at: new Date().toISOString(),
+              })
+              .select('id')
+              .single()
+
+            if (workerError || !worker?.id) {
+              await admin
+                .from('perception_route_nodes')
+                .update({
+                  status: 'failed',
+                  blocker: leftText(workerError?.message || 'Local worker could not be persisted.', 1000),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', persistedNode.id)
+              localExecutions.push({
+                node_key: plannedNode.key,
+                ok: false,
+                phase: 'failed',
+                failures: [workerError?.message || 'Local worker could not be persisted.'],
+              })
+              continue
+            }
+
+            const localDecision = governTask({
+              statement: plannedNode.outcome,
+              capability: 'generate',
+              risk: plannedNode.risk,
+            })
+            const localModelRoute = routeModelTargets(localDecision, configuredTargets, {
+              risk: plannedNode.risk,
+              mechanicallyVerifiable: true,
+              costControlEnabled,
+              budgetPressure,
+            })
+
+            const materialized = await materializeLocalArtifact({
+              objective: statement,
+              desiredReality: meaning.desired_reality,
+              currentReality: realityMap.currentReality,
+              outcome: plannedNode.outcome,
+              constraints: meaning.constraints,
+              successCriteria: [
+                ...meaning.success_criteria,
+                ...plannedNode.completionTests.map((test) => test.description),
+              ],
+              verifiedEvidence: realityMap.verifiedEvidence.slice(0, 20),
+              candidates: localModelRoute.candidates,
+              maxOutputTokens: localDecision.maxOutputTokens,
+            })
+            const verification = verifyLocalArtifact(materialized, plannedNode.outcome)
+
+            for (const attempt of materialized.attempts) {
+              if (!attempt.usage) continue
+              const matchedTarget = configuredTargets.find(
+                (target) => target.provider === attempt.provider && target.model === attempt.model,
+              )
+              const estimatedCostUsd = estimateCost(attempt.usage, matchedTarget?.price)
+              const deepestPrice = configuredTargets
+                .filter((target) => target.lane === 'deep' && target.price)
+                .map((target) => target.price)[0]
+              const baselineCostUsd = estimateCost(attempt.usage, deepestPrice) || estimatedCostUsd
+
+              const usageCall = await admin.rpc('perception_record_token_usage_internal', {
+                p_user_id: userData.user.id,
+                p_project_id: projectId,
+                p_objective_id: objectiveId,
+                p_worker_run_id: worker.id,
+                p_capability: 'generate',
+                p_task_kind: 'local_generate_worker',
+                p_provider: attempt.provider,
+                p_model: attempt.model,
+                p_budget_tier: localDecision.tier,
+                p_input_tokens: attempt.usage.inputTokens,
+                p_cached_input_tokens: attempt.usage.cachedInputTokens,
+                p_output_tokens: attempt.usage.outputTokens,
+                p_reasoning_tokens: attempt.usage.reasoningTokens,
+                p_max_output_tokens: localDecision.maxOutputTokens,
+                p_estimated_cost_usd: estimatedCostUsd,
+                p_baseline_cost_usd: baselineCostUsd,
+                p_request_id: null,
+                p_metadata: {
+                  ok: attempt.ok,
+                  reason: attempt.reason ?? null,
+                  protocol: attempt.protocol,
+                  routing_strategy: 'verified-cheapest-first',
+                  runtime: 'local_generate_worker_v1',
+                },
+              })
+
+              if (usageCall.error) {
+                console.error('Perception local worker token telemetry failed', {
+                  code: usageCall.error.code,
+                  message: usageCall.error.message,
+                })
+              }
+            }
+
+            if (!materialized.ok || !verification.passed) {
+              const failures = Array.from(new Set([
+                ...materialized.failures,
+                ...verification.failures,
+              ]))
+
+              await admin
+                .from('perception_verification_runs')
+                .insert({
+                  user_id: userData.user.id,
+                  project_id: projectId,
+                  route_node_id: persistedNode.id,
+                  worker_run_id: worker.id,
+                  passed: false,
+                  evidence: [...materialized.evidence, ...verification.evidence],
+                  details: {
+                    kind: 'local_artifact_verification_v1',
+                    node_key: plannedNode.key,
+                    failures,
+                  },
+                })
+
+              await admin
+                .from('perception_worker_runs')
+                .update({
+                  status: 'failed',
+                  evidence: [
+                    ...materialized.evidence,
+                    ...verification.evidence,
+                    ...failures.map((failure) => ({ kind: 'failure', failure })),
+                  ],
+                  finished_at: new Date().toISOString(),
+                })
+                .eq('id', worker.id)
+
+              await admin
+                .from('perception_route_nodes')
+                .update({
+                  status: 'failed',
+                  blocker: leftText(failures.join(' '), 1000),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', persistedNode.id)
+
+              localExecutions.push({
+                node_key: plannedNode.key,
+                worker_run_id: worker.id,
+                ok: false,
+                phase: 'failed',
+                failures,
+              })
+              continue
+            }
+
+            const { data: artifact, error: artifactError } = await admin
+              .from('perception_artifacts')
+              .insert({
+                user_id: userData.user.id,
+                project_id: projectId,
+                objective_id: objectiveId,
+                route_node_id: persistedNode.id,
+                artifact_type: 'dynamic_local_artifact',
+                title: plannedNode.outcome.slice(0, 500),
+                content: materialized.content,
+                metadata: {
+                  worker_key: 'local_generate_worker_v1',
+                  generated_title: materialized.title,
+                  planned_outcome: plannedNode.outcome,
+                  confidence: materialized.confidence,
+                  completion_evidence: materialized.completionEvidence,
+                  model_attempts: materialized.attempts,
+                },
+              })
+              .select('id')
+              .single()
+
+            if (artifactError || !artifact?.id) {
+              await admin
+                .from('perception_worker_runs')
+                .update({
+                  status: 'failed',
+                  evidence: [{ kind: 'failure', failure: artifactError?.message || 'Artifact persistence failed.' }],
+                  finished_at: new Date().toISOString(),
+                })
+                .eq('id', worker.id)
+              await admin
+                .from('perception_route_nodes')
+                .update({
+                  status: 'failed',
+                  blocker: leftText(artifactError?.message || 'Artifact persistence failed.', 1000),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', persistedNode.id)
+              localExecutions.push({
+                node_key: plannedNode.key,
+                worker_run_id: worker.id,
+                ok: false,
+                phase: 'failed',
+                failures: [artifactError?.message || 'Artifact persistence failed.'],
+              })
+              continue
+            }
+
+            const verificationEvidence = [
+              ...materialized.evidence,
+              ...verification.evidence,
+              {
+                kind: 'planned_completion_tests',
+                tests: plannedNode.completionTests,
+              },
+            ]
+
+            const { data: verificationRun, error: verificationError } = await admin
+              .from('perception_verification_runs')
+              .insert({
+                user_id: userData.user.id,
+                project_id: projectId,
+                route_node_id: persistedNode.id,
+                worker_run_id: worker.id,
+                passed: true,
+                evidence: verificationEvidence,
+                details: {
+                  kind: 'local_artifact_verification_v1',
+                  node_key: plannedNode.key,
+                  planned_outcome: plannedNode.outcome,
+                  confidence: materialized.confidence,
+                },
+              })
+              .select('id')
+              .single()
+
+            if (verificationError || !verificationRun?.id) {
+              await admin
+                .from('perception_worker_runs')
+                .update({
+                  status: 'failed',
+                  evidence: [{ kind: 'failure', failure: verificationError?.message || 'Verification persistence failed.' }],
+                  finished_at: new Date().toISOString(),
+                })
+                .eq('id', worker.id)
+              await admin
+                .from('perception_route_nodes')
+                .update({
+                  status: 'failed',
+                  blocker: leftText(verificationError?.message || 'Verification persistence failed.', 1000),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', persistedNode.id)
+              localExecutions.push({
+                node_key: plannedNode.key,
+                worker_run_id: worker.id,
+                artifact_id: artifact.id,
+                ok: false,
+                phase: 'failed',
+                failures: [verificationError?.message || 'Verification persistence failed.'],
+              })
+              continue
+            }
+
+            const verifiedSummary = `Verified bounded artifact created for: ${plannedNode.outcome}`
+            const applyCall = await admin.rpc('perception_apply_verified_local_effect_internal', {
+              p_user_id: userData.user.id,
+              p_project_id: projectId,
+              p_objective_id: objectiveId,
+              p_route_node_id: persistedNode.id,
+              p_worker_run_id: worker.id,
+              p_artifact_id: artifact.id,
+              p_summary: verifiedSummary,
+              p_evidence: verificationEvidence,
+            })
+
+            if (applyCall.error) {
+              await admin
+                .from('perception_worker_runs')
+                .update({
+                  status: 'failed',
+                  evidence: [
+                    ...verificationEvidence,
+                    { kind: 'failure', failure: applyCall.error.message },
+                  ],
+                  finished_at: new Date().toISOString(),
+                })
+                .eq('id', worker.id)
+              await admin
+                .from('perception_route_nodes')
+                .update({
+                  status: 'failed',
+                  blocker: leftText(applyCall.error.message, 1000),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', persistedNode.id)
+              localExecutions.push({
+                node_key: plannedNode.key,
+                worker_run_id: worker.id,
+                artifact_id: artifact.id,
+                verification_id: verificationRun.id,
+                ok: false,
+                phase: 'failed',
+                failures: [applyCall.error.message],
+              })
+              continue
+            }
+
+            const companionVerifyNodes = routePlan.nodes.filter((candidate) =>
+              candidate.capability === 'verify'
+              && candidate.dependencies.includes(plannedNode.key)
+            )
+
+            for (const verifyNode of companionVerifyNodes) {
+              const persistedVerifyNode = (persistedLocalNodes ?? []).find((candidate) =>
+                candidate.capability === 'verify'
+                && candidate.label === verifyNode.label
+                && candidate.outcome === verifyNode.outcome
+              ) ?? (persistedLocalNodes ?? []).find((candidate) =>
+                candidate.capability === 'verify'
+                && candidate.label === verifyNode.label
+              )
+
+              if (persistedVerifyNode?.id) {
+                await admin
+                  .from('perception_route_nodes')
+                  .update({ status: 'completed', blocker: null, updated_at: new Date().toISOString() })
+                  .eq('id', persistedVerifyNode.id)
+
+                await admin
+                  .from('perception_model_events')
+                  .insert({
+                    user_id: userData.user.id,
+                    project_id: projectId,
+                    event_type: 'route_node.completed',
+                    payload: {
+                      objective_id: objectiveId,
+                      route_node_id: persistedVerifyNode.id,
+                      verified_route_node_id: persistedNode.id,
+                      verification_id: verificationRun.id,
+                      source: 'companion_verification_v0_4',
+                    },
+                  })
+              }
+            }
+
+            localExecutions.push({
+              node_key: plannedNode.key,
+              worker_run_id: worker.id,
+              artifact_id: artifact.id,
+              verification_id: verificationRun.id,
+              ok: true,
+              phase: 'verified',
+              confidence: materialized.confidence,
+            })
+          }
+        }
+      }
+
+      if (localExecutions.length > 0) {
+        const [
+          refreshedProject,
+          refreshedArtifacts,
+          refreshedVerifications,
+          refreshedEpistemic,
+          refreshedExecution,
+          refreshedNodes,
+        ] = await Promise.all([
+          admin
+            .from('perception_projects')
+            .select('current_reality, desired_reality')
+            .eq('id', projectId)
+            .eq('user_id', userData.user.id)
+            .maybeSingle(),
+          admin
+            .from('perception_artifacts')
+            .select('title, content, artifact_type')
+            .eq('project_id', projectId)
+            .eq('user_id', userData.user.id)
+            .order('created_at', { ascending: false })
+            .limit(100),
+          admin
+            .from('perception_verification_runs')
+            .select('passed, details')
+            .eq('project_id', projectId)
+            .eq('user_id', userData.user.id)
+            .order('checked_at', { ascending: false })
+            .limit(100),
+          admin
+            .from('perception_epistemic_ledger')
+            .select('statement, state, confidence, route_impact')
+            .eq('project_id', projectId)
+            .eq('user_id', userData.user.id)
+            .order('created_at', { ascending: false })
+            .limit(200),
+          admin
+            .from('perception_execution_ledger')
+            .select('action_key, phase, details')
+            .eq('project_id', projectId)
+            .eq('user_id', userData.user.id)
+            .order('created_at', { ascending: false })
+            .limit(200),
+          admin
+            .from('perception_route_nodes')
+            .select('blocker')
+            .eq('project_id', projectId)
+            .eq('route_id', activeRouteId)
+            .eq('user_id', userData.user.id)
+            .order('created_at', { ascending: false })
+            .limit(200),
+        ])
+
+        realitySnapshot = {
+          currentReality: refreshedProject.data?.current_reality || realitySnapshot.currentReality,
+          desiredReality: refreshedProject.data?.desired_reality || realitySnapshot.desiredReality,
+          artifacts: (refreshedArtifacts.data ?? []).map((artifact) => ({
+            title: artifact.title || '',
+            content: artifact.content,
+            artifactType: artifact.artifact_type,
+          })),
+          verifications: (refreshedVerifications.data ?? []).map((verificationRow) => ({
+            passed: Boolean(verificationRow.passed),
+            details: verificationRow.details as Record<string, unknown> | null,
+          })),
+          epistemic: (refreshedEpistemic.data ?? []).map((claim) => ({
+            statement: claim.statement || '',
+            state: claim.state,
+            confidence: Number(claim.confidence ?? 0),
+            routeImpact: claim.route_impact,
+          })) as ProjectRealitySnapshot['epistemic'],
+          execution: (refreshedExecution.data ?? []).map((entry) => ({
+            actionKey: entry.action_key || '',
+            phase: entry.phase,
+            details: entry.details as Record<string, unknown> | null,
+          })) as ProjectRealitySnapshot['execution'],
+          blockers: (refreshedNodes.data ?? [])
+            .map((node) => node.blocker)
+            .filter((blocker): blocker is string => typeof blocker === 'string' && blocker.trim().length > 0),
+        }
+
+        realityMap = mapProjectReality(plannerMeaning, realitySnapshot)
+        const adaptedRoutePlan = planDynamicRealityRoute(plannerMeaning, realityMap, {
+          availableCapabilities: plannerCapabilities,
+        })
+
+        const adaptationCall = await admin.rpc('perception_apply_dynamic_route_internal', {
+          p_user_id: userData.user.id,
+          p_project_id: projectId,
+          p_objective_id: objectiveId,
+          p_previous_route_id: activeRouteId,
+          p_plan: adaptedRoutePlan,
+        })
+
+        if (!adaptationCall.error && adaptationCall.data && typeof adaptationCall.data === 'object') {
+          runtimeResult = {
+            ...runtimeResult,
+            ...(adaptationCall.data as Record<string, unknown>),
+          }
+          const adaptedRouteId = (adaptationCall.data as Record<string, unknown>).continuation_route_id
+          if (typeof adaptedRouteId === 'string') activeRouteId = adaptedRouteId
+          routePlan = adaptedRoutePlan
+        } else if (
+          adaptationCall.error?.code !== 'PGRST202'
+          && adaptationCall.error?.code !== '42883'
+        ) {
+          console.error('Perception adaptation route persistence failed', {
+            code: adaptationCall.error?.code,
+            message: adaptationCall.error?.message,
+          })
+        }
+      }
+    }
 
     const capabilityRouting = routePlannedCapabilities(routePlan.nodes, {
       githubOperatorAttached: operatorCapabilities.includes('code'),
@@ -951,6 +1491,11 @@ Deno.serve(async (req: Request) => {
       route_plan: routePlan,
       capability_routing: capabilityRouting,
       action_contracts: actionContracts,
+      local_executions: localExecutions,
+      adaptation: {
+        remapped_after_local_execution: localExecutions.length > 0,
+        active_route_id: activeRouteId,
+      },
       code_plan_materializations: codePlanMaterializations,
       token_control: {
         enabled: costControlEnabled,

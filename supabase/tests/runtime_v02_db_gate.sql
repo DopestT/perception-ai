@@ -530,4 +530,114 @@ where project_id = :'continuation_project_id'::uuid
   \quit 1
 \endif
 
-\echo 'PASS: Runtime v0.2 + v0.3 database safety gate'
+
+insert into public.perception_route_nodes(
+  user_id, project_id, route_id, label, outcome, status, capability,
+  permission_level, confidence, risk, completion_tests, sort_order
+) values (
+  :'user1'::uuid, :'continuation_project_id'::uuid, :'dynamic_route_id'::uuid,
+  'Local bounded deliverable', 'Verified local runtime artifact exists.', 'running', 'generate',
+  'P1', 0.9, 'low',
+  jsonb_build_array(jsonb_build_object('description','Artifact content is inspectable','kind','deterministic')),
+  50
+)
+returning id as local_node_id
+\gset
+
+insert into public.perception_worker_runs(
+  user_id, project_id, route_node_id, worker_key, capability, permission_level,
+  status, input, started_at
+) values (
+  :'user1'::uuid, :'continuation_project_id'::uuid, :'local_node_id'::uuid,
+  'local_generate_worker_v1', 'generate', 'P1', 'running',
+  jsonb_build_object('runtime','v0.4'), now()
+)
+returning id as local_worker_id
+\gset
+
+insert into public.perception_artifacts(
+  user_id, project_id, objective_id, route_node_id,
+  artifact_type, title, content, metadata
+) values (
+  :'user1'::uuid, :'continuation_project_id'::uuid, :'continuation_objective_id'::uuid, :'local_node_id'::uuid,
+  'dynamic_local_artifact',
+  'Verified local runtime artifact exists.',
+  'This is a bounded P1 artifact created only for the isolated database gate. It is intentionally long enough to represent a useful persisted draft and has no external effect.',
+  jsonb_build_object('runtime','local_generate_worker_v1')
+)
+returning id as local_artifact_id
+\gset
+
+insert into public.perception_verification_runs(
+  user_id, project_id, route_node_id, worker_run_id,
+  passed, evidence, details
+) values (
+  :'user1'::uuid, :'continuation_project_id'::uuid, :'local_node_id'::uuid, :'local_worker_id'::uuid,
+  true,
+  jsonb_build_array(jsonb_build_object('kind','local_runtime_v04_gate','result','pass')),
+  jsonb_build_object('kind','local_artifact_verification_v1')
+)
+returning id as local_verification_id
+\gset
+
+select (
+  array_agg(phase order by created_at, id)
+  = array['intended','authorized','attempted','observed','verified']::text[]
+) as local_execution_chain_ok
+from public.perception_execution_ledger
+where worker_run_id = :'local_worker_id'::uuid
+\gset
+\if :local_execution_chain_ok
+\else
+  \echo 'FAIL: local P1 worker did not produce intended -> authorized -> attempted -> observed -> verified'
+  \quit 1
+\endif
+
+select public.perception_apply_verified_local_effect_internal(
+  :'user1'::uuid,
+  :'continuation_project_id'::uuid,
+  :'continuation_objective_id'::uuid,
+  :'local_node_id'::uuid,
+  :'local_worker_id'::uuid,
+  :'local_artifact_id'::uuid,
+  'Verified bounded artifact created for: Verified local runtime artifact exists.',
+  jsonb_build_array(jsonb_build_object('kind','local_runtime_v04_gate','result','pass'))
+);
+
+select (
+  p.current_reality = 'Verified bounded artifact created for: Verified local runtime artifact exists.'
+) as local_project_world_advanced
+from public.perception_projects p
+where p.id = :'continuation_project_id'::uuid
+\gset
+\if :local_project_world_advanced
+\else
+  \echo 'FAIL: verified local P1 effect did not advance Project World'
+  \quit 1
+\endif
+
+select (count(*) = 1) as local_epistemic_claim_ok
+from public.perception_epistemic_ledger
+where project_id = :'continuation_project_id'::uuid
+  and claim_key = 'local.verified.' || :'local_worker_id'
+  and state = 'observed'
+\gset
+\if :local_epistemic_claim_ok
+\else
+  \echo 'FAIL: verified local effect did not create observed epistemic evidence'
+  \quit 1
+\endif
+
+select (
+  has_function_privilege('service_role', 'public.perception_apply_verified_local_effect_internal(uuid,uuid,uuid,uuid,uuid,uuid,text,jsonb)', 'execute')
+  and not has_function_privilege('authenticated', 'public.perception_apply_verified_local_effect_internal(uuid,uuid,uuid,uuid,uuid,uuid,text,jsonb)', 'execute')
+  and not has_function_privilege('anon', 'public.perception_apply_verified_local_effect_internal(uuid,uuid,uuid,uuid,uuid,uuid,text,jsonb)', 'execute')
+) as local_truth_bridge_privileges_ok
+\gset
+\if :local_truth_bridge_privileges_ok
+\else
+  \echo 'FAIL: local truth bridge RPC permissions are not service-only'
+  \quit 1
+\endif
+
+\echo 'PASS: Runtime v0.2 + v0.3 + v0.4 database safety gate'
