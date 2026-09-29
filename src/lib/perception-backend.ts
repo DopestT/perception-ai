@@ -410,6 +410,14 @@ export async function getSession(): Promise<Session | null> {
   return data.session
 }
 
+export async function startGuestSession(): Promise<Session> {
+  const client = requireBackend()
+  const { data, error } = await client.auth.signInAnonymously()
+  if (error) throw error
+  if (!data.session) throw new Error('Perception could not start a guest session.')
+  return data.session
+}
+
 function authRedirectTo(): string {
   const configuredAppUrl = (import.meta.env.VITE_APP_URL || 'https://www.perceptionai.io').replace(/\/$/, '')
 
