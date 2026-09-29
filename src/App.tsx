@@ -7,6 +7,7 @@ import {
   attachKalshiMarketSignal,
   backendConfigured,
   createForecast,
+  getAuthCapabilities,
   getForecastCalibration,
   getLatestForecast,
   getLatestProjectWorld,
@@ -20,6 +21,7 @@ import {
   resumeObjective,
   signInWithOAuthProvider,
   signInWithPasskey,
+  startGuestSession,
   signInWithPassword,
   signUpWithPassword,
   runAutonomousForecast,
@@ -30,6 +32,7 @@ import {
   submitObjective,
   supabase,
   type Forecast,
+  type AuthCapabilities,
   type ForecastCalibration,
   type GitHubOperatorSelfTestPlan,
   type ObjectiveRuntimeResult,
@@ -155,6 +158,7 @@ function App() {
   const [marketNote, setMarketNote] = useState('')
   const [intelligenceNote, setIntelligenceNote] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
+  const [authCapabilities, setAuthCapabilities] = useState<AuthCapabilities>({ anonymous: false, google: false, apple: false, passkey: false })
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
@@ -169,6 +173,7 @@ function App() {
     experienceMode === 'forecast'
       ? forecastExperience
       : experienceModes.find((mode) => mode.id === experienceMode) ?? experienceModes[1]
+  const isGuest = Boolean(session?.user?.is_anonymous)
 
   const loadLatestWorld = useCallback(async () => {
     const [latest, pendingApproval] = await Promise.all([
@@ -355,6 +360,8 @@ function App() {
       }
     }
 
+    void getAuthCapabilities().then(setAuthCapabilities).catch(() => undefined)
+
     getSession()
       .then(acceptSession)
       .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'Could not restore the Perception session.') })
@@ -385,7 +392,21 @@ function App() {
     if (!session) {
       savePendingObjective(statement, experienceMode, experienceMode === 'forecast' ? forecastDeadline : undefined)
       setPortalMode('charging')
-      await delay(260)
+      setError('')
+
+      if (authCapabilities.anonymous) {
+        try {
+          const guestSession = await startGuestSession()
+          setSession(guestSession)
+          if (experienceMode === 'forecast') await processForecast(statement, forecastDeadline)
+          else await processObjective(statement)
+          return
+        } catch {
+          // Fall through to the permanent-account path if guest auth is temporarily unavailable.
+        }
+      }
+
+      setAuthMode('signup')
       setPortalMode('auth')
       setAuthOpen(true)
       return
@@ -680,16 +701,23 @@ function App() {
           <span>PERCEPTION</span>
         </button>
         {session ? (
-          <div className="account-actions">
-            <button className="quiet-action" type="button" onClick={handlePrepareOperatorProof} disabled={runningOperatorTest || busy}>
-              {runningOperatorTest ? 'PREPARING…' : 'PREPARE OPERATOR PROOF'}
-            </button>
-            <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth' })}>PROJECT WORLD</button>
-            <button className="quiet-action" type="button" onClick={handleRegisterPasskey} disabled={registeringPasskey}>
-              {registeringPasskey ? 'ADDING PASSKEY…' : 'ENABLE PASSKEY'}
-            </button>
-            <button className="icon-action" type="button" onClick={logout} aria-label="Sign out"><LogOut size={15} /></button>
-          </div>
+          isGuest ? (
+            <div className="account-actions">
+              <span className="guest-session-pill">TRY MODE</span>
+              <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth' })}>PROJECT WORLD</button>
+            </div>
+          ) : (
+            <div className="account-actions">
+              <button className="quiet-action" type="button" onClick={handlePrepareOperatorProof} disabled={runningOperatorTest || busy}>
+                {runningOperatorTest ? 'PREPARING…' : 'PREPARE OPERATOR PROOF'}
+              </button>
+              <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth' })}>PROJECT WORLD</button>
+              <button className="quiet-action" type="button" onClick={handleRegisterPasskey} disabled={registeringPasskey}>
+                {registeringPasskey ? 'ADDING PASSKEY…' : 'ENABLE PASSKEY'}
+              </button>
+              <button className="icon-action" type="button" onClick={logout} aria-label="Sign out"><LogOut size={15} /></button>
+            </div>
+          )
         ) : (
           <button className="sign-in-link" type="button" onClick={() => { setPortalMode('auth'); setAuthOpen(true) }}>SIGN IN</button>
         )}
@@ -751,6 +779,7 @@ function App() {
               </div>
             )}
             <p className="track-line">SEE <span>•</span> HEAR <span>•</span> UNDERSTAND <span>•</span> BUILD</p>
+            {isGuest && <p className="guest-session-note">TRY MODE · NO SIGN-UP REQUIRED · THIS BROWSER REMEMBERS YOUR WORK</p>}
             {notice && <p className="hero-notice" role="status"><Check size={14} /> {notice}</p>}
             {error && !authOpen && <p className="hero-error" role="alert">{error}</p>}
           </div>
@@ -952,30 +981,40 @@ function App() {
 
             {!authSent ? (
               <>
-                <p className="section-kicker">YOUR PERCEPTION ACCOUNT</p>
-                <h2 id="auth-title">Continue your Project World.</h2>
-                <p>Sign in with the email attached to your Perception account. Your existing Perception history stays attached to the same verified account.</p>
+                <p className="section-kicker">{authMode === 'signup' ? 'SAVE YOUR PERCEPTION' : 'YOUR PERCEPTION ACCOUNT'}</p>
+                <h2 id="auth-title">{authMode === 'signup' ? 'Keep your work across devices.' : 'Continue your Project World.'}</h2>
+                <p>{authMode === 'signup' ? 'Create an account to keep your Project World available across sessions and devices.' : 'Use the sign-in method attached to your Perception account.'}</p>
 
                 {authMode !== 'magic' ? (
                   <>
-                    <div className="auth-provider-stack" aria-label="Modern sign-in methods">
-                      <button className="auth-provider" type="button" onClick={handlePasskeySignIn} disabled={authBusy}>
-                        <KeyRound size={17} />
-                        <span>{authBusy ? 'WORKING…' : 'CONTINUE WITH PASSKEY'}</span>
-                        <span aria-hidden="true" />
-                      </button>
-                      <button className="auth-provider" type="button" onClick={() => handleOAuthSignIn('google')} disabled={authBusy}>
-                        <span className="auth-provider-mark" aria-hidden="true">G</span>
-                        <span>CONTINUE WITH GOOGLE</span>
-                        <span aria-hidden="true" />
-                      </button>
-                      <button className="auth-provider" type="button" onClick={() => handleOAuthSignIn('apple')} disabled={authBusy}>
-                        <span className="auth-provider-mark" aria-hidden="true">A</span>
-                        <span>CONTINUE WITH APPLE</span>
-                        <span aria-hidden="true" />
-                      </button>
-                    </div>
-                    <div className="auth-divider">OR CONTINUE WITH EMAIL</div>
+                    {(authCapabilities.passkey || authCapabilities.google || authCapabilities.apple) && (
+                      <>
+                        <div className="auth-provider-stack" aria-label="Available sign-in methods">
+                          {authCapabilities.passkey && (
+                            <button className="auth-provider" type="button" onClick={handlePasskeySignIn} disabled={authBusy}>
+                              <KeyRound size={17} />
+                              <span>{authBusy ? 'WORKING…' : 'CONTINUE WITH PASSKEY'}</span>
+                              <span aria-hidden="true" />
+                            </button>
+                          )}
+                          {authCapabilities.google && (
+                            <button className="auth-provider" type="button" onClick={() => handleOAuthSignIn('google')} disabled={authBusy}>
+                              <span className="auth-provider-mark" aria-hidden="true">G</span>
+                              <span>CONTINUE WITH GOOGLE</span>
+                              <span aria-hidden="true" />
+                            </button>
+                          )}
+                          {authCapabilities.apple && (
+                            <button className="auth-provider" type="button" onClick={() => handleOAuthSignIn('apple')} disabled={authBusy}>
+                              <span className="auth-provider-mark" aria-hidden="true">A</span>
+                              <span>CONTINUE WITH APPLE</span>
+                              <span aria-hidden="true" />
+                            </button>
+                          )}
+                        </div>
+                        <div className="auth-divider">OR CONTINUE WITH EMAIL</div>
+                      </>
+                    )}
                     <div className="auth-mode-switch" role="tablist" aria-label="Email authentication mode">
                       <button type="button" className={authMode === 'signin' ? 'auth-mode-tab auth-mode-tab--active' : 'auth-mode-tab'} onClick={() => setAuthMode('signin')}>SIGN IN</button>
                       <button type="button" className={authMode === 'signup' ? 'auth-mode-tab auth-mode-tab--active' : 'auth-mode-tab'} onClick={() => setAuthMode('signup')}>CREATE ACCOUNT</button>
