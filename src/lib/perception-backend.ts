@@ -410,6 +410,30 @@ export async function getSession(): Promise<Session | null> {
   return data.session
 }
 
+export type AuthCapabilities = {
+  anonymous: boolean
+  google: boolean
+  apple: boolean
+  passkey: boolean
+}
+
+export async function getAuthCapabilities(): Promise<AuthCapabilities> {
+  const response = await fetch(`${PERCEPTION_SUPABASE_URL}/auth/v1/settings`, {
+    headers: { apikey: publishableKey },
+  })
+  if (!response.ok) return { anonymous: false, google: false, apple: false, passkey: false }
+  const settings = await response.json() as {
+    external?: Record<string, boolean>
+    passkeys_enabled?: boolean
+  }
+  return {
+    anonymous: Boolean(settings.external?.anonymous_users),
+    google: Boolean(settings.external?.google),
+    apple: Boolean(settings.external?.apple),
+    passkey: Boolean(settings.passkeys_enabled),
+  }
+}
+
 export async function startGuestSession(): Promise<Session> {
   const client = requireBackend()
   const { data, error } = await client.auth.signInAnonymously()
