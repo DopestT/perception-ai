@@ -173,6 +173,7 @@ function App() {
   const typingTimer = useRef<number | null>(null)
   const intentShadowTimer = useRef<number | null>(null)
   const intentShadowAbort = useRef<AbortController | null>(null)
+  const intentShadowGeneration = useRef(0)
   const intentShadowRef = useRef<{ text: string; mode: ExperienceMode; preview: IntentShadowPreview } | null>(null)
 
   const completedStages = useMemo(() => inferCompletedStages(world, runtimeResult), [world, runtimeResult])
@@ -214,7 +215,6 @@ function App() {
       const preparedShadow = intentShadowRef.current
       const shadowStillMatches = Boolean(
         preparedShadow
-        && preparedShadow.mode === experienceMode
         && statement.startsWith(preparedShadow.text.trim())
       )
       const candidateScenarioIds = shadowStillMatches
@@ -413,6 +413,10 @@ function App() {
     event.preventDefault()
     const statement = input.trim()
     if (!statement || busy) return
+    if (intentShadowTimer.current) window.clearTimeout(intentShadowTimer.current)
+    intentShadowAbort.current?.abort()
+    intentShadowAbort.current = null
+    intentShadowGeneration.current += 1
 
     if (!session) {
       savePendingObjective(statement, experienceMode, experienceMode === 'forecast' ? forecastDeadline : undefined)
@@ -703,6 +707,7 @@ function App() {
     if (intentShadowTimer.current) window.clearTimeout(intentShadowTimer.current)
     intentShadowAbort.current?.abort()
     intentShadowAbort.current = null
+    const generation = ++intentShadowGeneration.current
 
     const provisional = value.trim()
     if (
@@ -725,8 +730,8 @@ function App() {
         .then((preview) => {
           if (
             controller.signal.aborted
+            || intentShadowGeneration.current !== generation
             || !preview
-            || input.trim() !== shadowText
           ) return
           intentShadowRef.current = { text: shadowText, mode: shadowMode, preview }
         })
@@ -745,6 +750,11 @@ function App() {
 
   const selectExperienceMode = (nextMode: ExperienceMode) => {
     if (busy || nextMode === experienceMode) return
+    if (intentShadowTimer.current) window.clearTimeout(intentShadowTimer.current)
+    intentShadowAbort.current?.abort()
+    intentShadowAbort.current = null
+    intentShadowGeneration.current += 1
+    intentShadowRef.current = null
     setExperienceMode(nextMode)
     setError('')
     setNotice('')
