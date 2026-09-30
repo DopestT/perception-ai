@@ -43,6 +43,7 @@ export type WarmStartScenario = {
   confidence: number
   isFresh: boolean
   matchCount: number
+  utilityScore?: number
   intentKeys: string[]
   routeSeed?: Record<string, unknown>
 }
@@ -91,6 +92,7 @@ function selectWarmStartScenario(options: PlannerOptions): WarmStartScenario | n
     )
     .sort((left, right) =>
       right.matchCount - left.matchCount
+      || (right.utilityScore ?? 0.5) - (left.utilityScore ?? 0.5)
       || right.confidence - left.confidence
       || left.scenarioKey.localeCompare(right.scenarioKey)
     )
