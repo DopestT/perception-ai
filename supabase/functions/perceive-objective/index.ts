@@ -7,6 +7,7 @@ import { routePlannedCapabilities } from '../_shared/capability-router.ts'
 import { buildGitHubActionContract, repositoryFromGitHubLocator } from '../_shared/action-contract.ts'
 import { materializeGitHubCodePlan, type GitHubCodePlanResult } from '../_shared/code-plan-materializer.ts'
 import { materializeLocalArtifact, verifyLocalArtifact } from '../_shared/local-runtime.ts'
+import { isVerifiedGitHubOperatorAttachment, parseGitHubOperatorTarget } from '../_shared/operator-attachment.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -222,6 +223,7 @@ Deno.serve(async (req: Request) => {
       project_id?: unknown
       objective_id?: unknown
       intent_shadow?: unknown
+      operator_target?: unknown
     } | null
     const action = payload?.action === 'resume' ? 'resume' : 'submit'
     const requestedProjectId = typeof payload?.project_id === 'string' ? payload.project_id.trim() : ''
@@ -237,6 +239,66 @@ Deno.serve(async (req: Request) => {
 
     const admin = createClient(url, secretKey, {
       auth: { persistSession: false, autoRefreshToken: false },
+    })
+
+    const requestedOperatorTarget = action === 'submit'
+      ? parseGitHubOperatorTarget(payload?.operator_target)
+      : null
+    const githubReadToken = (
+      Deno.env.get('PERCEPTION_GITHUB_TOKEN')
+      || Deno.env.get('PERCEPTION_OPERATOR_TOKEN')
+      || ''
+    ).trim()
+    let verifiedOperatorSourceId: string | null = null
+    let operatorPrincipalEnabled = false
+    let operatorSourceEnabled = false
+
+    if (requestedOperatorTarget) {
+      const [principalResult, sourceResult] = await Promise.all([
+        admin
+          .from('perception_operator_principals')
+          .select('id')
+          .eq('user_id', userData.user.id)
+          .eq('capability', 'code')
+          .eq('target', requestedOperatorTarget.target)
+          .eq('enabled', true)
+          .limit(1)
+          .maybeSingle(),
+        admin
+          .from('perception_sources')
+          .select('id')
+          .eq('user_id', userData.user.id)
+          .eq('provider', 'github')
+          .eq('source_type', 'github_repo')
+          .eq('external_id', requestedOperatorTarget.repository)
+          .eq('enabled', true)
+          .limit(1)
+          .maybeSingle(),
+      ])
+
+      if (principalResult.error) {
+        console.error('Perception operator principal lookup failed', {
+          code: principalResult.error.code,
+          message: principalResult.error.message,
+        })
+      }
+      if (sourceResult.error) {
+        console.error('Perception operator source lookup failed', {
+          code: sourceResult.error.code,
+          message: sourceResult.error.message,
+        })
+      }
+
+      operatorPrincipalEnabled = Boolean(principalResult.data?.id)
+      operatorSourceEnabled = Boolean(sourceResult.data?.id)
+      verifiedOperatorSourceId = sourceResult.data?.id ?? null
+    }
+
+    const verifiedOperatorAttachment = isVerifiedGitHubOperatorAttachment({
+      target: requestedOperatorTarget,
+      principalEnabled: operatorPrincipalEnabled,
+      sourceEnabled: operatorSourceEnabled,
+      readCredentialPresent: Boolean(githubReadToken),
     })
 
     let intentShadowWarmStarts: WarmStartScenario[] = []
@@ -442,10 +504,14 @@ Deno.serve(async (req: Request) => {
         })
 
     const runtimeCapabilities = ['reason', 'generate', 'verify'] as const
-    const operatorCapabilities = ((Deno.env.get('PERCEPTION_OPERATOR_CAPABILITIES') || Deno.env.get('PERCEPTION_OPERATOR_CAPIBILITIES')) ?? '')
+    const configuredOperatorCapabilities = ((Deno.env.get('PERCEPTION_OPERATOR_CAPABILITIES') || Deno.env.get('PERCEPTION_OPERATOR_CAPIBILITIES')) ?? '')
       .split(',')
       .map((value) => value.trim())
       .filter((value) => value.length > 0)
+    const operatorCapabilities = Array.from(new Set([
+      ...configuredOperatorCapabilities,
+      ...(verifiedOperatorAttachment ? ['code'] : []),
+    ]))
 
     const availableCapabilities = Array.from(new Set([
       ...runtimeCapabilities,
@@ -538,6 +604,33 @@ Deno.serve(async (req: Request) => {
     const projectId = typeof runtimeResult.project_id === 'string' ? runtimeResult.project_id : null
     const objectiveId = typeof runtimeResult.objective_id === 'string' ? runtimeResult.objective_id : null
     const routeId = typeof runtimeResult.route_id === 'string' ? runtimeResult.route_id : null
+
+    let operatorSourceBound = false
+    if (projectId && verifiedOperatorAttachment && verifiedOperatorSourceId) {
+      const { error: bindingError } = await admin
+        .from('perception_project_source_bindings')
+        .upsert({
+          user_id: userData.user.id,
+          project_id: projectId,
+          source_id: verifiedOperatorSourceId,
+          relationship: 'primary',
+          active: true,
+          updated_at: new Date().toISOString(),
+        }, {
+          onConflict: 'project_id,source_id',
+        })
+
+      if (bindingError) {
+        console.error('Perception verified operator source attachment failed', {
+          code: bindingError.code,
+          message: bindingError.message,
+          project_id: projectId,
+          target: requestedOperatorTarget?.target ?? null,
+        })
+      } else {
+        operatorSourceBound = true
+      }
+    }
 
     let warmStartScenarios: WarmStartScenario[] = []
     if (projectId) {
@@ -1225,11 +1318,6 @@ Deno.serve(async (req: Request) => {
     })
 
     const hasGitHubCodeRoute = capabilityRouting.some((decision) => decision.adapter === 'github-operator')
-    const githubReadToken = (
-      Deno.env.get('PERCEPTION_GITHUB_TOKEN')
-      || Deno.env.get('PERCEPTION_OPERATOR_TOKEN')
-      || ''
-    ).trim()
     const codePlanDecision = hasGitHubCodeRoute
       ? governTask({ statement: meaning.desired_reality, capability: 'code', risk: 'medium' })
       : null
@@ -1838,6 +1926,14 @@ Deno.serve(async (req: Request) => {
         resumed: Boolean(resumeObjective),
         reused_existing_route: Boolean(resumeObjective && routeId),
         active_route_id: activeRouteId,
+      },
+      operator_attachment: {
+        requested_target: requestedOperatorTarget?.target ?? null,
+        principal_enabled: operatorPrincipalEnabled,
+        source_enabled: operatorSourceEnabled,
+        source_bound: operatorSourceBound,
+        read_credential_present: Boolean(githubReadToken),
+        code_attached: operatorCapabilities.includes('code'),
       },
       warm_start: {
         loaded: warmStartScenarios.length > 0,
