@@ -11,6 +11,7 @@ limit 1
 \gset
 
 select set_config('request.jwt.claim.sub', :'shadow_user_id', false);
+set role authenticated;
 
 select count(*)::integer as shadow_scenarios_before
 from public.perception_scenarios
@@ -56,6 +57,8 @@ select (:'shadow_scenarios_before'::integer = :'shadow_scenarios_after'::integer
   \quit 1
 \endif
 
+reset role;
+
 insert into auth.users(id, email)
 values ('33333333-3333-4333-8333-333333333333'::uuid, 'intent-shadow-other@example.test')
 on conflict (id) do nothing;
@@ -65,6 +68,7 @@ select set_config(
   '33333333-3333-4333-8333-333333333333',
   false
 );
+set role authenticated;
 
 with preview as (
   select public.perception_preview_intent_shadow(
@@ -87,6 +91,8 @@ from preview
   \echo 'FAIL: intent shadow exposed another user Project World'
   \quit 1
 \endif
+
+reset role;
 
 select (
   has_function_privilege(
