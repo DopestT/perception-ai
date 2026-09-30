@@ -74,6 +74,17 @@ insert into public.perception_learning_candidates(
   now()
 );
 
+select public.perception_project_needs_scenario_refresh_internal(
+  :'v09_user_id'::uuid,
+  :'v09_project_id'::uuid
+) as v09_missing_learning_scenario_due_ok
+\gset
+\if :v09_missing_learning_scenario_due_ok
+\else
+  \echo 'FAIL: accepted learning without a learning scenario did not make the Project World due'
+  \quit 1
+\endif
+
 select public.perception_refresh_learning_scenarios_internal(
   :'v09_user_id'::uuid,
   :'v09_project_id'::uuid
