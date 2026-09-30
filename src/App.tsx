@@ -219,9 +219,12 @@ function App() {
         && statement.startsWith(preparedShadow.text.trim())
       )
       const candidateScenarioIds = shadowStillMatches
-        ? preparedShadow!.preview.candidates
-            .flatMap((candidate) => candidate.scenarios.map((scenario) => scenario.id))
-            .slice(0, 6)
+        ? Array.from(new Set(
+            preparedShadow!.preview.candidates.flatMap((candidate) => [
+              ...candidate.scenarios.map((scenario) => scenario.id),
+              ...(candidate.learning_candidates ?? []).map((learning) => learning.scenario_id),
+            ]),
+          )).slice(0, 6)
         : []
 
       const request = submitObjective(statement, candidateScenarioIds.length ? {
