@@ -1,7 +1,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { governTask, routeModelTargets, type ModelPrice, type ModelProtocol, type ModelTarget } from '../_shared/token-efficiency.ts'
 import { deterministicMeaning, resolveObjectiveMeaning, type ResolvedObjectiveMeaning } from '../_shared/meaning-resolver.ts'
-import { planDynamicRealityRoute } from '../_shared/reality-planner.ts'
+import { planDynamicRealityRoute, type WarmStartScenario } from '../_shared/reality-planner.ts'
 import { mapProjectReality, type ProjectRealitySnapshot } from '../_shared/reality-mapper.ts'
 import { routePlannedCapabilities } from '../_shared/capability-router.ts'
 import { buildGitHubActionContract, repositoryFromGitHubLocator } from '../_shared/action-contract.ts'
@@ -463,6 +463,52 @@ Deno.serve(async (req: Request) => {
     const objectiveId = typeof runtimeResult.objective_id === 'string' ? runtimeResult.objective_id : null
     const routeId = typeof runtimeResult.route_id === 'string' ? runtimeResult.route_id : null
 
+    let warmStartScenarios: WarmStartScenario[] = []
+    if (projectId) {
+      const warmStartCall = await userClient.rpc('perception_get_warm_start', {
+        p_project_id: projectId,
+        p_objective_text: statement,
+        p_limit: 3,
+      })
+
+      if (
+        !warmStartCall.error
+        && warmStartCall.data
+        && typeof warmStartCall.data === 'object'
+        && !Array.isArray(warmStartCall.data)
+      ) {
+        const rows = (warmStartCall.data as Record<string, unknown>).scenarios
+        if (Array.isArray(rows)) {
+          warmStartScenarios = rows
+            .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object' && !Array.isArray(row)))
+            .map((row) => ({
+              scenarioKey: typeof row.scenario_key === 'string' ? row.scenario_key : '',
+              title: typeof row.title === 'string' ? row.title : '',
+              summary: typeof row.summary === 'string' ? row.summary : '',
+              confidence: typeof row.confidence === 'number' ? row.confidence : Number(row.confidence ?? 0),
+              isFresh: row.is_fresh === true,
+              matchCount: typeof row.match_count === 'number' ? row.match_count : Number(row.match_count ?? 0),
+              intentKeys: Array.isArray(row.intent_keys)
+                ? row.intent_keys.filter((value): value is string => typeof value === 'string')
+                : [],
+              routeSeed: row.route_seed && typeof row.route_seed === 'object' && !Array.isArray(row.route_seed)
+                ? row.route_seed as Record<string, unknown>
+                : undefined,
+            }))
+            .filter((scenario) => scenario.scenarioKey && Number.isFinite(scenario.confidence))
+        }
+      } else if (
+        warmStartCall.error?.code !== 'PGRST202'
+        && warmStartCall.error?.code !== '42883'
+      ) {
+        console.error('Perception warm-start lookup failed', {
+          code: warmStartCall.error?.code,
+          message: warmStartCall.error?.message,
+          project_id: projectId,
+        })
+      }
+    }
+
     let realitySnapshot: ProjectRealitySnapshot = {
       currentReality: meaning.current_reality,
       desiredReality: meaning.desired_reality,
@@ -550,6 +596,7 @@ Deno.serve(async (req: Request) => {
     let realityMap = mapProjectReality(plannerMeaning, realitySnapshot)
     let routePlan = planDynamicRealityRoute(plannerMeaning, realityMap, {
       availableCapabilities: plannerCapabilities,
+      warmStartScenarios,
     })
 
     if (!resumeObjective && projectId && objectiveId && routeId) {
@@ -1055,6 +1102,7 @@ Deno.serve(async (req: Request) => {
         realityMap = mapProjectReality(plannerMeaning, realitySnapshot)
         const adaptedRoutePlan = planDynamicRealityRoute(plannerMeaning, realityMap, {
           availableCapabilities: plannerCapabilities,
+          warmStartScenarios,
         })
 
         const adaptationCall = await admin.rpc('perception_apply_dynamic_route_internal', {
@@ -1647,6 +1695,45 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    let scenarioForge: Record<string, unknown> = {
+      refreshed: false,
+      source: 'scenario_forge_v0_6',
+    }
+
+    if (projectId) {
+      const forgeCall = await admin.rpc('perception_refresh_scenario_forge_internal', {
+        p_user_id: userData.user.id,
+        p_project_id: projectId,
+      })
+
+      if (
+        !forgeCall.error
+        && forgeCall.data
+        && typeof forgeCall.data === 'object'
+        && !Array.isArray(forgeCall.data)
+      ) {
+        scenarioForge = {
+          refreshed: true,
+          ...(forgeCall.data as Record<string, unknown>),
+          source: 'scenario_forge_v0_6',
+        }
+      } else if (
+        forgeCall.error?.code !== 'PGRST202'
+        && forgeCall.error?.code !== '42883'
+      ) {
+        console.error('Perception Scenario Forge refresh failed', {
+          code: forgeCall.error?.code,
+          message: forgeCall.error?.message,
+          project_id: projectId,
+        })
+        scenarioForge = {
+          refreshed: false,
+          source: 'scenario_forge_v0_6',
+          error: 'refresh_failed',
+        }
+      }
+    }
+
     return json({
       ...runtimeResult,
       meaning,
@@ -1664,6 +1751,19 @@ Deno.serve(async (req: Request) => {
         resumed: Boolean(resumeObjective),
         reused_existing_route: Boolean(resumeObjective && routeId),
         active_route_id: activeRouteId,
+      },
+      warm_start: {
+        loaded: warmStartScenarios.length > 0,
+        selected_scenario_key: routePlan.warmStartScenarioKey ?? null,
+        scenario_count: warmStartScenarios.length,
+        scenarios: warmStartScenarios.map((scenario) => ({
+          scenario_key: scenario.scenarioKey,
+          title: scenario.title,
+          confidence: scenario.confidence,
+          match_count: scenario.matchCount,
+          is_fresh: scenario.isFresh,
+        })),
+        forge: scenarioForge,
       },
       token_control: {
         enabled: costControlEnabled,
