@@ -113,4 +113,38 @@ describe('Dynamic Route Planner v0.3', () => {
     expect(route.blockedCapabilities).toContain('research')
     expect(route.nodes.find((node) => node.key.startsWith('resolve-unknown-'))?.status).toBe('blocked')
   })
+
+  it('loads only fresh revalidation-required warm-start scenarios', () => {
+    const map = mapProjectReality(baseMeaning, snapshot)
+    const route = planDynamicRealityRoute(baseMeaning, map, {
+      availableCapabilities: ['reason', 'research', 'generate', 'verify'],
+      warmStartScenarios: [
+        {
+          scenarioKey: 'stale-fast-path',
+          title: 'Stale fast path',
+          summary: 'Should not be trusted.',
+          confidence: 0.99,
+          isFresh: false,
+          matchCount: 10,
+          intentKeys: ['launch'],
+          routeSeed: { must_revalidate: true },
+        },
+        {
+          scenarioKey: 'continue-active-route',
+          title: 'Continue active route',
+          summary: 'Fresh Project World continuation.',
+          confidence: 0.9,
+          isFresh: true,
+          matchCount: 2,
+          intentKeys: ['launch', 'product'],
+          routeSeed: { must_revalidate: true },
+        },
+      ],
+    })
+
+    expect(route.warmStartScenarioKey).toBe('continue-active-route')
+    expect(route.reason).toContain('Warm start continue-active-route')
+    expect(route.reason).toContain('must be revalidated')
+  })
+
 })
