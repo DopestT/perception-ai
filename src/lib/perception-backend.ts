@@ -389,6 +389,12 @@ export type IntentShadowPreview = {
   valid_for_ms?: number
 }
 
+export type IntentShadowHandoff = {
+  source: 'intent_shadow_v0_8'
+  prepared_at?: string
+  candidate_scenario_ids: string[]
+}
+
 export type ProjectLedgers = {
   epistemic: Array<{
     id: string
@@ -549,10 +555,16 @@ export async function signOut(): Promise<void> {
   if (error) throw error
 }
 
-export async function submitObjective(statement: string): Promise<ObjectiveRuntimeResult> {
+export async function submitObjective(
+  statement: string,
+  intentShadow?: IntentShadowHandoff,
+): Promise<ObjectiveRuntimeResult> {
   const client = requireBackend()
   const { data, error } = await client.functions.invoke<ObjectiveRuntimeResult>('perceive-objective', {
-    body: { statement },
+    body: {
+      statement,
+      ...(intentShadow ? { intent_shadow: intentShadow } : {}),
+    },
   })
   if (error) throw error
   if (!data) throw new Error('Perception runtime returned no result.')
