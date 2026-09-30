@@ -129,19 +129,30 @@ on conflict (id) do nothing;
 
 select set_config('request.jwt.claim.sub', '22222222-2222-4222-8222-222222222222', false);
 
-do $$
+create or replace function pg_temp.scenario_forge_owner_gate(p_project_id uuid)
+returns boolean
+language plpgsql
+as $
 begin
   perform public.perception_get_warm_start(
-    :'sf_project_id'::uuid,
+    p_project_id,
     'unowned project',
     3
   );
-  raise exception 'Scenario Forge owner gate failed';
+  return false;
 exception
   when insufficient_privilege then
-    null;
+    return true;
 end;
-$$;
+$;
+
+select pg_temp.scenario_forge_owner_gate(:'sf_project_id'::uuid) as sf_owner_gate_ok
+\gset
+\if :sf_owner_gate_ok
+\else
+  \echo 'FAIL: Scenario Forge owner gate allowed cross-user warm-start access'
+  \quit 1
+\endif
 
 select (
   has_function_privilege('service_role', 'public.perception_refresh_scenario_forge_internal(uuid,uuid)', 'execute')
