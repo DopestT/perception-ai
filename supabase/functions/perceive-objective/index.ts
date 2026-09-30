@@ -241,9 +241,14 @@ Deno.serve(async (req: Request) => {
       auth: { persistSession: false, autoRefreshToken: false },
     })
 
-    const requestedOperatorTarget = action === 'submit'
+    const explicitOperatorTarget = action === 'submit'
       ? parseGitHubOperatorTarget(payload?.operator_target)
       : null
+    const selfTestOperatorTarget = action === 'submit'
+      && statement.includes('docs/OPERATOR_LIVE_PROOF.md')
+      ? parseGitHubOperatorTarget('github://DopestT/perception-ai@main')
+      : null
+    const requestedOperatorTarget = explicitOperatorTarget ?? selfTestOperatorTarget
     const githubReadToken = (
       Deno.env.get('PERCEPTION_GITHUB_TOKEN')
       || Deno.env.get('PERCEPTION_OPERATOR_TOKEN')
