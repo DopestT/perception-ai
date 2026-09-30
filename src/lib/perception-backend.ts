@@ -354,6 +354,14 @@ export type ObjectiveRuntimeResult = {
   }
   local_executions?: Array<Record<string, unknown>>
   action_contracts?: GitHubActionContract[]
+  operator_attachment?: {
+    requested_target: string | null
+    principal_enabled: boolean
+    source_enabled: boolean
+    source_bound: boolean
+    read_credential_present: boolean
+    code_attached: boolean
+  }
 }
 
 export type IntentShadowScenario = {
@@ -558,12 +566,14 @@ export async function signOut(): Promise<void> {
 export async function submitObjective(
   statement: string,
   intentShadow?: IntentShadowHandoff,
+  operatorTarget?: string,
 ): Promise<ObjectiveRuntimeResult> {
   const client = requireBackend()
   const { data, error } = await client.functions.invoke<ObjectiveRuntimeResult>('perceive-objective', {
     body: {
       statement,
       ...(intentShadow ? { intent_shadow: intentShadow } : {}),
+      ...(operatorTarget ? { operator_target: operatorTarget } : {}),
     },
   })
   if (error) throw error
@@ -931,16 +941,34 @@ export async function preparePerceptionGitHubSelfTest(): Promise<GitHubOperatorS
 
   const objective = await submitObjective(
     'Create docs/OPERATOR_LIVE_PROOF.md in the Perception GitHub repository on a bounded branch with a short non-secret proof message that says the P1 materializer planned this change. Verify the external effect independently and update Project World without changing main.',
+    undefined,
+    'github://DopestT/perception-ai@main',
   )
   if (!objective.ok || !objective.project_id) {
     throw new Error(objective.stage || 'Could not create the Operator self-test Project World.')
   }
 
-  const resolved = validateOperatorProofContract(
-    objective.action_contracts?.find(
-      (candidate) => candidate.adapter === 'github-operator' && candidate.permission.level === 'P2',
-    ),
+  const candidate = objective.action_contracts?.find(
+    (action) => action.adapter === 'github-operator' && action.permission.level === 'P2',
   )
+
+  if (!candidate) {
+    const attachment = objective.operator_attachment
+    if (attachment && !attachment.principal_enabled) {
+      throw new Error('The Operator proof target is not enabled for this account.')
+    }
+    if (attachment && !attachment.source_enabled) {
+      throw new Error('The Perception GitHub repository is not attached as an enabled Project World source.')
+    }
+    if (attachment && !attachment.read_credential_present) {
+      throw new Error('The server-side GitHub read credential is not configured for the Operator proof.')
+    }
+    if (attachment && !attachment.source_bound) {
+      throw new Error('Perception could not attach the verified GitHub source to the proof Project World.')
+    }
+  }
+
+  const resolved = validateOperatorProofContract(candidate)
 
   if (resolved.contract.permission.status === 'active') {
     throw new Error('The prepared proof unexpectedly already has an active permission grant.')
