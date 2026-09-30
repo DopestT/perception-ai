@@ -374,6 +374,20 @@ export type IntentShadowScenario = {
   must_revalidate: true
 }
 
+export type IntentShadowLearningCandidate = {
+  candidate_id: string
+  scenario_id: string
+  scenario_key: string
+  title: string
+  confidence: number
+  materiality_score: number
+  verification_kind: string
+  match_count: number
+  last_seen_at: string
+  expires_at: string
+  must_revalidate: true
+}
+
 export type IntentShadowCandidate = {
   project_id: string
   name: string
@@ -382,12 +396,15 @@ export type IntentShadowCandidate = {
   updated_at: string
   project_match_count: number
   scenario_match_count: number
+  learning_match_count?: number
   relevance_score: number
   scenarios: IntentShadowScenario[]
+  learning_candidates?: IntentShadowLearningCandidate[]
 }
 
 export type IntentShadowPreview = {
   source: 'intent_shadow_v0_8'
+  retrieval_version?: 'anticipatory_learning_v0_12'
   mode: 'discover' | 'perceive' | 'search' | 'forecast'
   query_length: number
   candidate_count: number
