@@ -221,6 +221,7 @@ Deno.serve(async (req: Request) => {
       action?: unknown
       project_id?: unknown
       objective_id?: unknown
+      intent_shadow?: unknown
     } | null
     const action = payload?.action === 'resume' ? 'resume' : 'submit'
     const requestedProjectId = typeof payload?.project_id === 'string' ? payload.project_id.trim() : ''
@@ -237,6 +238,10 @@ Deno.serve(async (req: Request) => {
     const admin = createClient(url, secretKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     })
+
+    let intentShadowWarmStarts: WarmStartScenario[] = []
+    let intentShadowCandidateIds: string[] = []
+    let intentShadowAccepted = false
 
     const failLocalWorker = async (
       workerRunId: string,
@@ -312,6 +317,77 @@ Deno.serve(async (req: Request) => {
 
       statement = resumeObjective.statement.trim()
       if (statement.length < 3) return json({ error: 'Stored objective is not resumable' }, 409)
+    }
+
+    if (action === 'submit' && payload?.intent_shadow && typeof payload.intent_shadow === 'object' && !Array.isArray(payload.intent_shadow)) {
+      const shadow = payload.intent_shadow as Record<string, unknown>
+      const preparedAt = typeof shadow.prepared_at === 'string' ? new Date(shadow.prepared_at).getTime() : NaN
+      const ageMs = Number.isFinite(preparedAt) ? Date.now() - preparedAt : Number.POSITIVE_INFINITY
+      const candidateIds = Array.isArray(shadow.candidate_scenario_ids)
+        ? shadow.candidate_scenario_ids
+            .filter((value): value is string => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value))
+            .slice(0, 6)
+        : []
+
+      if (
+        shadow.source === 'intent_shadow_v0_8'
+        && ageMs >= -5_000
+        && ageMs <= 120_000
+        && candidateIds.length > 0
+      ) {
+        intentShadowCandidateIds = candidateIds
+        const { data: shadowRows, error: shadowError } = await admin
+          .from('perception_scenarios')
+          .select('id, scenario_key, title, summary, confidence, intent_keys, route_seed, expires_at')
+          .eq('user_id', userData.user.id)
+          .eq('status', 'active')
+          .gt('expires_at', new Date().toISOString())
+          .in('id', candidateIds)
+
+        if (shadowError) {
+          console.error('Perception intent shadow revalidation failed', {
+            code: shadowError.code,
+            message: shadowError.message,
+          })
+        } else {
+          const normalizedStatement = statement.toLowerCase()
+          intentShadowWarmStarts = (shadowRows ?? [])
+            .map((row) => {
+              const intentKeys = Array.isArray(row.intent_keys)
+                ? row.intent_keys.filter((value): value is string => typeof value === 'string')
+                : []
+              const routeSeed = row.route_seed && typeof row.route_seed === 'object' && !Array.isArray(row.route_seed)
+                ? row.route_seed as Record<string, unknown>
+                : undefined
+              const matchCount = intentKeys.filter((key) => normalizedStatement.includes(key.toLowerCase())).length
+              const confidence = typeof row.confidence === 'number' ? row.confidence : Number(row.confidence ?? 0)
+
+              return {
+                scenarioKey: `intent-shadow:${row.id}`,
+                title: typeof row.title === 'string' ? row.title : 'Prepared route context',
+                summary: typeof row.summary === 'string' ? row.summary : '',
+                confidence,
+                isFresh: true,
+                matchCount,
+                intentKeys,
+                routeSeed: routeSeed?.must_revalidate === true
+                  ? {
+                      ...routeSeed,
+                      source: 'intent_shadow_v0_8',
+                      must_revalidate: true,
+                    }
+                  : undefined,
+              } satisfies WarmStartScenario
+            })
+            .filter((scenario) =>
+              scenario.routeSeed?.must_revalidate === true
+              && Number.isFinite(scenario.confidence)
+              && scenario.confidence >= 0
+              && scenario.confidence <= 1
+            )
+          intentShadowAccepted = intentShadowWarmStarts.length > 0
+        }
+      }
     }
 
     const { data: policy } = await admin
@@ -507,6 +583,17 @@ Deno.serve(async (req: Request) => {
           project_id: projectId,
         })
       }
+    }
+
+    if (intentShadowWarmStarts.length > 0) {
+      const merged = [...warmStartScenarios, ...intentShadowWarmStarts]
+      const seen = new Set<string>()
+      warmStartScenarios = merged.filter((scenario) => {
+        const key = scenario.scenarioKey
+        if (!key || seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
     }
 
     let realitySnapshot: ProjectRealitySnapshot = {
@@ -1756,6 +1843,11 @@ Deno.serve(async (req: Request) => {
         loaded: warmStartScenarios.length > 0,
         selected_scenario_key: routePlan.warmStartScenarioKey ?? null,
         scenario_count: warmStartScenarios.length,
+        intent_shadow: {
+          received_candidate_count: intentShadowCandidateIds.length,
+          accepted: intentShadowAccepted,
+          reused_scenario_count: intentShadowWarmStarts.length,
+        },
         scenarios: warmStartScenarios.map((scenario) => ({
           scenario_key: scenario.scenarioKey,
           title: scenario.title,
