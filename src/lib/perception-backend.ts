@@ -356,6 +356,45 @@ export type ObjectiveRuntimeResult = {
   action_contracts?: GitHubActionContract[]
 }
 
+export type IntentShadowScenario = {
+  id: string
+  scenario_key: string
+  title: string
+  confidence: number
+  match_count: number
+  expires_at: string
+  must_revalidate: true
+}
+
+export type IntentShadowCandidate = {
+  project_id: string
+  name: string
+  current_reality: string
+  desired_reality: string
+  updated_at: string
+  project_match_count: number
+  scenario_match_count: number
+  relevance_score: number
+  scenarios: IntentShadowScenario[]
+}
+
+export type IntentShadowPreview = {
+  source: 'intent_shadow_v0_8'
+  mode: 'discover' | 'perceive' | 'search' | 'forecast'
+  query_length: number
+  candidate_count: number
+  candidates: IntentShadowCandidate[]
+  ephemeral: true
+  prepared_at?: string
+  valid_for_ms?: number
+}
+
+export type IntentShadowHandoff = {
+  source: 'intent_shadow_v0_8'
+  prepared_at?: string
+  candidate_scenario_ids: string[]
+}
+
 export type ProjectLedgers = {
   epistemic: Array<{
     id: string
@@ -516,14 +555,44 @@ export async function signOut(): Promise<void> {
   if (error) throw error
 }
 
-export async function submitObjective(statement: string): Promise<ObjectiveRuntimeResult> {
+export async function submitObjective(
+  statement: string,
+  intentShadow?: IntentShadowHandoff,
+): Promise<ObjectiveRuntimeResult> {
   const client = requireBackend()
   const { data, error } = await client.functions.invoke<ObjectiveRuntimeResult>('perceive-objective', {
-    body: { statement },
+    body: {
+      statement,
+      ...(intentShadow ? { intent_shadow: intentShadow } : {}),
+    },
   })
   if (error) throw error
   if (!data) throw new Error('Perception runtime returned no result.')
   return data
+}
+
+export async function previewIntentShadow(
+  text: string,
+  mode: IntentShadowPreview['mode'],
+  signal?: AbortSignal,
+): Promise<IntentShadowPreview | null> {
+  const client = requireBackend()
+  const request = client.rpc('perception_preview_intent_shadow', {
+    p_text: text,
+    p_mode: mode,
+    p_limit: 3,
+  })
+  const { data, error } = signal
+    ? await request.abortSignal(signal)
+    : await request
+
+  if (signal?.aborted) return null
+  if (error) {
+    if (error.code === 'PGRST202' || error.code === '42883') return null
+    throw error
+  }
+
+  return data ? data as IntentShadowPreview : null
 }
 
 export async function resumeObjective(projectId: string, objectiveId?: string): Promise<ObjectiveRuntimeResult> {

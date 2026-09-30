@@ -28,6 +28,7 @@ import {
   denyPerceptionGitHubSelfTest,
   executePerceptionGitHubSelfTest,
   preparePerceptionGitHubSelfTest,
+  previewIntentShadow,
   signOut,
   submitObjective,
   supabase,
@@ -35,6 +36,7 @@ import {
   type AuthCapabilities,
   type ForecastCalibration,
   type GitHubOperatorSelfTestPlan,
+  type IntentShadowPreview,
   type ObjectiveRuntimeResult,
   type ProjectLedgers,
   type ProjectWorld,
@@ -42,6 +44,8 @@ import {
 
 const PENDING_OBJECTIVE_KEY = 'perception:pending-objective:v2'
 const PENDING_TTL_MS = 30 * 60 * 1000
+const INTENT_SHADOW_DEBOUNCE_MS = 320
+const INTENT_SHADOW_MIN_CHARS = 6
 const targetStages = [
   'UNDERSTOOD',
   'PROJECT WORLD CREATED',
@@ -167,6 +171,10 @@ function App() {
   const [typingEnergy, setTypingEnergy] = useState(0)
   const resumeInFlight = useRef(false)
   const typingTimer = useRef<number | null>(null)
+  const intentShadowTimer = useRef<number | null>(null)
+  const intentShadowAbort = useRef<AbortController | null>(null)
+  const intentShadowGeneration = useRef(0)
+  const intentShadowRef = useRef<{ text: string; mode: ExperienceMode; preview: IntentShadowPreview } | null>(null)
 
   const completedStages = useMemo(() => inferCompletedStages(world, runtimeResult), [world, runtimeResult])
   const activeExperience =
@@ -204,7 +212,22 @@ function App() {
     setPortalMode('charging')
 
     try {
-      const request = submitObjective(statement)
+      const preparedShadow = intentShadowRef.current
+      const shadowStillMatches = Boolean(
+        preparedShadow
+        && statement.startsWith(preparedShadow.text.trim())
+      )
+      const candidateScenarioIds = shadowStillMatches
+        ? preparedShadow!.preview.candidates
+            .flatMap((candidate) => candidate.scenarios.map((scenario) => scenario.id))
+            .slice(0, 6)
+        : []
+
+      const request = submitObjective(statement, candidateScenarioIds.length ? {
+        source: 'intent_shadow_v0_8',
+        prepared_at: preparedShadow?.preview.prepared_at,
+        candidate_scenario_ids: candidateScenarioIds,
+      } : undefined)
       await delay(280)
       setPortalMode('absorbing')
       const result = await request
@@ -382,12 +405,18 @@ function App() {
 
   useEffect(() => () => {
     if (typingTimer.current) window.clearTimeout(typingTimer.current)
+    if (intentShadowTimer.current) window.clearTimeout(intentShadowTimer.current)
+    intentShadowAbort.current?.abort()
   }, [])
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     const statement = input.trim()
     if (!statement || busy) return
+    if (intentShadowTimer.current) window.clearTimeout(intentShadowTimer.current)
+    intentShadowAbort.current?.abort()
+    intentShadowAbort.current = null
+    intentShadowGeneration.current += 1
 
     if (!session) {
       savePendingObjective(statement, experienceMode, experienceMode === 'forecast' ? forecastDeadline : undefined)
@@ -674,6 +703,42 @@ function App() {
       setTypingEnergy(Math.max(0.08, activity * 0.35))
       setPortalMode('focused')
     }, 420)
+
+    if (intentShadowTimer.current) window.clearTimeout(intentShadowTimer.current)
+    intentShadowAbort.current?.abort()
+    intentShadowAbort.current = null
+    const generation = ++intentShadowGeneration.current
+
+    const provisional = value.trim()
+    if (
+      !session
+      || busy
+      || experienceMode === 'forecast'
+      || provisional.length < INTENT_SHADOW_MIN_CHARS
+    ) {
+      intentShadowRef.current = null
+      return
+    }
+
+    intentShadowTimer.current = window.setTimeout(() => {
+      const controller = new AbortController()
+      intentShadowAbort.current = controller
+      const shadowText = provisional
+      const shadowMode = experienceMode
+
+      void previewIntentShadow(shadowText, shadowMode, controller.signal)
+        .then((preview) => {
+          if (
+            controller.signal.aborted
+            || intentShadowGeneration.current !== generation
+            || !preview
+          ) return
+          intentShadowRef.current = { text: shadowText, mode: shadowMode, preview }
+        })
+        .catch((cause) => {
+          if (!controller.signal.aborted) console.debug('Perception intent shadow skipped.', cause)
+        })
+    }, INTENT_SHADOW_DEBOUNCE_MS)
   }
 
   const closeAuth = () => {
@@ -685,6 +750,11 @@ function App() {
 
   const selectExperienceMode = (nextMode: ExperienceMode) => {
     if (busy || nextMode === experienceMode) return
+    if (intentShadowTimer.current) window.clearTimeout(intentShadowTimer.current)
+    intentShadowAbort.current?.abort()
+    intentShadowAbort.current = null
+    intentShadowGeneration.current += 1
+    intentShadowRef.current = null
     setExperienceMode(nextMode)
     setError('')
     setNotice('')
