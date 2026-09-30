@@ -124,3 +124,10 @@ The immediate engineering gate is the **real-user production proof of the full c
 4. The UI shows all seven stages as complete only after verification.
 5. The user reloads or returns later.
 6. The same verified Project World is restored from Supabase rather than localStorage.
+
+## Runtime v0.8 — Anticipatory Retrieval
+
+Perception now prepares owner-scoped context while an authenticated user types. The Intent Shadow path is debounced and cancellable, persists no provisional keystrokes, searches only the user's Project World and fresh Scenario Forge memory, and hands only short-lived scenario identifiers to the objective runtime. Final submitted text remains authoritative, and every reused scenario is revalidated for ownership, freshness, expiry, confidence, and `must_revalidate` before it can influence routing.
+
+Production database migration 034 and `perceive-objective` Edge Function v19 are live. GitHub CI and the authenticated-role database gate passed for PR #57.
+
