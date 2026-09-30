@@ -403,6 +403,42 @@ export type IntentShadowHandoff = {
   candidate_scenario_ids: string[]
 }
 
+export type ExternalPresearchStatus = {
+  ok: boolean
+  source: 'external_presearch_control_v0_11'
+  enabled: boolean
+  consent_version: number
+  consented_at: string | null
+  provider: 'tavily'
+  provider_configured: boolean
+  ready: boolean
+  external_attempted: false
+  stores_draft_text: false
+}
+
+export type ExternalPresearchPreview = {
+  ok: boolean
+  source: 'external_presearch_control_v0_11'
+  ready: boolean
+  external_attempted: boolean
+  provider?: 'tavily'
+  reason?: string
+  provider_status?: number
+  result_count?: number
+  results?: Array<{
+    title: string
+    url: string
+    snippet: string
+    score: number
+    published_at: string | null
+  }>
+  ephemeral?: true
+  prepared_at?: string
+  valid_for_ms?: number
+  must_revalidate?: true
+  stores_draft_text: false
+}
+
 export type ProjectLedgers = {
   epistemic: Array<{
     id: string
@@ -603,6 +639,88 @@ export async function previewIntentShadow(
   }
 
   return data ? data as IntentShadowPreview : null
+}
+
+async function invokeExternalPresearch<T>(
+  body: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<T> {
+  const client = requireBackend()
+  const { data: sessionData, error: sessionError } = await client.auth.getSession()
+  if (sessionError) throw sessionError
+  const accessToken = sessionData.session?.access_token
+  if (!accessToken) throw new Error('Perception external pre-search requires an active session.')
+
+  const response = await fetch(
+    `${PERCEPTION_SUPABASE_URL}/functions/v1/anticipate-objective`,
+    {
+      method: 'POST',
+      headers: {
+        apikey: publishableKey,
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal,
+    },
+  )
+
+  const payload = await response.json().catch(() => ({})) as Record<string, unknown>
+  if (!response.ok) {
+    const message = typeof payload.error === 'string'
+      ? payload.error
+      : 'Perception external pre-search is unavailable.'
+    throw new Error(message)
+  }
+
+  return payload as T
+}
+
+export async function getExternalPresearchStatus(
+  signal?: AbortSignal,
+): Promise<ExternalPresearchStatus> {
+  return invokeExternalPresearch<ExternalPresearchStatus>({ action: 'status' }, signal)
+}
+
+export async function setExternalPresearchEnabled(enabled: boolean): Promise<void> {
+  const client = requireBackend()
+  const { data: sessionData, error: sessionError } = await client.auth.getSession()
+  if (sessionError) throw sessionError
+  const userId = sessionData.session?.user.id
+  if (!userId) throw new Error('Perception external pre-search requires an active session.')
+
+  const now = new Date().toISOString()
+  const { error } = await client
+    .from('perception_runtime_preferences')
+    .upsert({
+      user_id: userId,
+      external_anticipatory_search_enabled: enabled,
+      external_search_consent_version: 1,
+      external_search_consented_at: enabled ? now : null,
+      updated_at: now,
+    }, {
+      onConflict: 'user_id',
+    })
+
+  if (error) throw error
+}
+
+export async function previewExternalIntent(
+  query: string,
+  mode: Exclude<IntentShadowPreview['mode'], 'forecast'>,
+  stableDwellMs: number,
+  signal?: AbortSignal,
+): Promise<ExternalPresearchPreview | null> {
+  if (signal?.aborted) return null
+
+  const result = await invokeExternalPresearch<ExternalPresearchPreview>({
+    action: 'preview',
+    query,
+    mode,
+    stable_dwell_ms: stableDwellMs,
+  }, signal)
+
+  return signal?.aborted ? null : result
 }
 
 export async function resumeObjective(projectId: string, objectiveId?: string): Promise<ObjectiveRuntimeResult> {
