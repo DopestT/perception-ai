@@ -36,6 +36,17 @@ export type PlannerMeaning = {
   knownUnknowns: string[]
 }
 
+export type WarmStartScenario = {
+  scenarioKey: string
+  title: string
+  summary: string
+  confidence: number
+  isFresh: boolean
+  matchCount: number
+  intentKeys: string[]
+  routeSeed?: Record<string, unknown>
+}
+
 export type PlannedRouteNode = {
   key: string
   label: string
@@ -60,13 +71,32 @@ export type PlannedRoute = {
   gaps?: RealityGap[]
   worldBlockers?: string[]
   source?: 'initial_heuristic_v0_2' | 'project_world_dynamic_v0_3'
+  warmStartScenarioKey?: string
 }
 
 type PlannerOptions = {
   availableCapabilities?: CapabilityKind[]
+  warmStartScenarios?: WarmStartScenario[]
 }
 
 const defaultCapabilities: CapabilityKind[] = ['reason', 'generate', 'verify']
+
+function selectWarmStartScenario(options: PlannerOptions): WarmStartScenario | null {
+  const candidates = (options.warmStartScenarios ?? [])
+    .filter((scenario) =>
+      scenario.isFresh
+      && scenario.confidence >= 0
+      && scenario.confidence <= 1
+      && scenario.routeSeed?.must_revalidate === true
+    )
+    .sort((left, right) =>
+      right.matchCount - left.matchCount
+      || right.confidence - left.confidence
+      || left.scenarioKey.localeCompare(right.scenarioKey)
+    )
+
+  return candidates[0] ?? null
+}
 
 function explicitExternalAction(desiredReality: string): { capability: CapabilityKind; permission: PermissionLevel; label: string } | null {
   const value = desiredReality.toLowerCase()
@@ -245,6 +275,7 @@ export function planDynamicRealityRoute(
   options: PlannerOptions = {},
 ): PlannedRoute {
   const available = new Set(options.availableCapabilities ?? defaultCapabilities)
+  const warmStartScenario = selectWarmStartScenario(options)
   const nodes: PlannedRouteNode[] = []
   const blockedCapabilities = new Set<CapabilityKind>()
   const unknownKeys: string[] = []
@@ -385,6 +416,9 @@ export function planDynamicRealityRoute(
     blockedCapabilities.size
       ? `Unavailable capabilities remain blocked: ${Array.from(blockedCapabilities).join(', ')}.`
       : 'All planned capabilities are available.',
+    warmStartScenario
+      ? `Warm start ${warmStartScenario.scenarioKey} loaded at confidence ${warmStartScenario.confidence.toFixed(2)}; it is a route hint only and must be revalidated against current Project World evidence before execution.`
+      : 'No fresh warm-start scenario matched this route.',
   ].join(' ')
 
   return {
@@ -394,5 +428,6 @@ export function planDynamicRealityRoute(
     gaps: reality.gaps,
     worldBlockers: reality.blockers,
     source: 'project_world_dynamic_v0_3',
+    warmStartScenarioKey: warmStartScenario?.scenarioKey,
   }
 }
