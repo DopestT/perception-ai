@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ChevronDown, ChevronUp, Gauge, RefreshCw, ShieldCheck } from 'lucide-react'
-import { supabase } from './lib/perception-backend'
+import { ChevronDown, ChevronUp, Gauge, RefreshCw, Search, ShieldCheck } from 'lucide-react'
+import {
+  getExternalPresearchStatus,
+  setExternalPresearchEnabled,
+  supabase,
+  type ExternalPresearchStatus,
+} from './lib/perception-backend'
 import './token-efficiency.css'
 
 type WindowStats = {
@@ -65,6 +70,7 @@ function money(value: number | string | undefined) {
 
 export function TokenEfficiencyPanel() {
   const [dashboard, setDashboard] = useState<TokenDashboard | null>(null)
+  const [externalPresearch, setExternalPresearch] = useState<ExternalPresearchStatus | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
   const [projectId, setProjectId] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
@@ -87,6 +93,12 @@ export function TokenEfficiencyPanel() {
         return
       }
       setUserId(session.user.id)
+
+      try {
+        setExternalPresearch(await getExternalPresearchStatus())
+      } catch {
+        setExternalPresearch(null)
+      }
 
       const { data: project, error: projectError } = await supabase
         .from('perception_projects')
@@ -120,7 +132,7 @@ export function TokenEfficiencyPanel() {
     if (!supabase) return
 
     const { data: authListener } = supabase.auth.onAuthStateChange(() => {
-      void loadDashboard()
+      window.setTimeout(() => void loadDashboard(), 0)
     })
     const interval = window.setInterval(() => void loadDashboard(), 30_000)
 
@@ -167,6 +179,26 @@ export function TokenEfficiencyPanel() {
     }
   }
 
+  const setExternalPresearchControl = async (enabled: boolean) => {
+    if (
+      updating
+      || !externalPresearch?.provider_configured
+    ) return
+
+    setUpdating(true)
+    setError('')
+    try {
+      await setExternalPresearchEnabled(enabled)
+      window.dispatchEvent(new CustomEvent('perception:external-presearch-changed'))
+      await loadDashboard()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not update external pre-search.')
+    } finally {
+      setUpdating(false)
+    }
+  }
+
+
   if (!userId || (!dashboard && !error)) return null
 
   const today = dashboard?.today
@@ -201,6 +233,27 @@ export function TokenEfficiencyPanel() {
               <span />
             </button>
           </div>
+
+          <div className="token-panel__switch-row">
+            <span><Search size={15} /> External pre-search while typing</span>
+            <button
+              type="button"
+              className={externalPresearch?.enabled ? 'token-switch token-switch--on' : 'token-switch'}
+              onClick={() => void setExternalPresearchControl(!externalPresearch?.enabled)}
+              disabled={updating || !externalPresearch?.provider_configured}
+              aria-pressed={Boolean(externalPresearch?.enabled)}
+              aria-label="External pre-search while typing"
+            >
+              <span />
+            </button>
+          </div>
+          <p className="token-panel__presearch-note">
+            {externalPresearch?.provider_configured
+              ? externalPresearch.enabled
+                ? 'ON · Stable draft intent may be sent to the configured external search provider after a pause. Send remains authoritative.'
+                : 'OFF · External providers do not receive draft intent before Send.'
+              : 'OFF · No external search provider is configured. Internal Intent Shadow still prepares Project World context locally.'}
+          </p>
 
           <div className="token-panel__metrics">
             <div><small>TODAY</small><strong>{money(today?.estimated_cost_usd)}</strong><span>{compactNumber(numberValue(today?.input_tokens) + numberValue(today?.output_tokens))} tokens</span></div>
