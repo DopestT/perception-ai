@@ -80,8 +80,10 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/030_local_execution_truth_bridge.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/031_runtime_v05_reliable_continuation.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/032_scenario_forge_warm_start.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/033_scenario_forge_idle_bridge.sql
 
       - name: Run Runtime v0.2 security and truth assertions
         run: |
           psql -v ON_ERROR_STOP=1 -f supabase/tests/runtime_v02_db_gate.sql
           psql -v ON_ERROR_STOP=1 -f supabase/tests/runtime_v06_scenario_forge_gate.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/runtime_v07_scenario_forge_idle_gate.sql
