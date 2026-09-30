@@ -175,6 +175,7 @@ function App() {
   const intentShadowAbort = useRef<AbortController | null>(null)
   const intentShadowGeneration = useRef(0)
   const intentShadowRef = useRef<{ text: string; mode: ExperienceMode; preview: IntentShadowPreview } | null>(null)
+  const authHydratedUserRef = useRef<string | null>(null)
 
   const completedStages = useMemo(() => inferCompletedStages(world, runtimeResult), [world, runtimeResult])
   const activeExperience =
@@ -367,34 +368,63 @@ function App() {
     }
 
     let active = true
-    const acceptSession = async (nextSession: Session | null) => {
+    const acceptSession = (nextSession: Session | null) => {
       if (!active) return
       setSession(nextSession)
-      if (!nextSession) return
+      if (!nextSession) {
+        authHydratedUserRef.current = null
+        return
+      }
       setAuthOpen(false)
       setAuthSent(false)
-      const pending = readPendingObjective()
-      if (pending) {
-        setExperienceMode(pending.mode)
-        if (pending.mode === 'forecast') await processForecast(pending.statement, pending.deadline || defaultForecastDeadline())
-        else await processObjective(pending.statement)
-      } else {
-        await Promise.all([loadLatestWorld(), loadForecastState()])
+    }
+
+    const hydrateSession = async (nextSession: Session) => {
+      if (!active) return
+      const hydrationKey = `${nextSession.user.id}:${nextSession.user.is_anonymous ? 'anonymous' : 'permanent'}`
+      if (authHydratedUserRef.current === hydrationKey) return
+      authHydratedUserRef.current = hydrationKey
+
+      try {
+        const pending = readPendingObjective()
+        if (pending) {
+          setExperienceMode(pending.mode)
+          if (pending.mode === 'forecast') await processForecast(pending.statement, pending.deadline || defaultForecastDeadline())
+          else await processObjective(pending.statement)
+        } else {
+          await Promise.all([loadLatestWorld(), loadForecastState()])
+        }
+      } catch (cause) {
+        authHydratedUserRef.current = null
+        throw cause
       }
     }
 
     void getAuthCapabilities().then(setAuthCapabilities).catch(() => undefined)
 
     getSession()
-      .then(acceptSession)
+      .then(async (nextSession) => {
+        acceptSession(nextSession)
+        if (nextSession) await hydrateSession(nextSession)
+      })
       .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'Could not restore the Perception session.') })
       .finally(() => { if (active) setLoading(false) })
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!active) return
-      void acceptSession(nextSession).catch((cause) => {
-        if (active) setError(cause instanceof Error ? cause.message : 'Could not continue the Perception session.')
-      })
+      acceptSession(nextSession)
+
+      // Supabase documents that awaiting async Supabase calls directly inside
+      // onAuthStateChange can deadlock the client. Defer post-auth hydration
+      // until after the auth callback returns.
+      if (event === 'SIGNED_IN' && nextSession) {
+        window.setTimeout(() => {
+          if (!active) return
+          void hydrateSession(nextSession).catch((cause) => {
+            if (active) setError(cause instanceof Error ? cause.message : 'Could not continue the Perception session.')
+          })
+        }, 0)
+      }
     })
 
     return () => {
@@ -502,26 +532,44 @@ function App() {
     }
   }
 
-  const handlePasswordAuth = async (event: FormEvent) => {
+  const handlePasswordAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const address = email.trim()
-    if (!address || password.length < 8 || authBusy) return
+    if (authBusy) return
 
+    // Read the DOM form values rather than relying only on React state.
+    // iOS/Safari password autofill can visibly populate a controlled input
+    // before React receives an onChange event.
+    const formData = new FormData(event.currentTarget)
+    const address = String(formData.get('email') ?? email).trim()
+    const submittedPassword = String(formData.get('password') ?? password)
+
+    if (!address) {
+      setError('Enter your email address.')
+      return
+    }
+    if (submittedPassword.length < 8) {
+      setError('Enter your password to continue.')
+      return
+    }
+
+    setEmail(address)
+    setPassword(submittedPassword)
     setAuthBusy(true)
     setError('')
-    setNotice('')
+    setNotice(authMode === 'signup' ? 'Creating your Perception account…' : 'Signing you in…')
 
     try {
       if (authMode === 'signup') {
-        const result = await signUpWithPassword(address, password)
+        const result = await signUpWithPassword(address, submittedPassword)
         if (result.requiresEmailConfirmation) {
           setAuthSent(true)
           setNotice('Check your email once to confirm this account. After that, use your password or passkey.')
         }
       } else {
-        await signInWithPassword(address, password)
+        await signInWithPassword(address, submittedPassword)
       }
     } catch (cause) {
+      setNotice('')
       setError(cause instanceof Error ? cause.message : 'Could not authenticate this account.')
     } finally {
       setAuthBusy(false)
@@ -1090,6 +1138,7 @@ function App() {
                     <form onSubmit={handlePasswordAuth} className="auth-password-form">
                       <input
                         type="email"
+                        name="email"
                         value={email}
                         onChange={(event) => setEmail(event.target.value)}
                         placeholder="Email address"
@@ -1098,6 +1147,7 @@ function App() {
                       />
                       <input
                         type="password"
+                        name="password"
                         value={password}
                         onChange={(event) => setPassword(event.target.value)}
                         placeholder={authMode === 'signup' ? 'Create a password' : 'Password'}
@@ -1105,7 +1155,7 @@ function App() {
                         minLength={8}
                         required
                       />
-                      <button type="submit" disabled={authBusy || !email.trim() || password.length < 8}>
+                      <button type="submit" disabled={authBusy}>
                         {authBusy ? 'WORKING…' : authMode === 'signup' ? 'CREATE ACCOUNT' : 'SIGN IN'}
                       </button>
                     </form>
