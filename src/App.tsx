@@ -394,16 +394,14 @@ function App() {
       setPortalMode('charging')
       setError('')
 
-      if (authCapabilities.anonymous) {
-        try {
-          const guestSession = await startGuestSession()
-          setSession(guestSession)
-          if (experienceMode === 'forecast') await processForecast(statement, forecastDeadline)
-          else await processObjective(statement)
-          return
-        } catch {
-          // Fall through to the permanent-account path if guest auth is temporarily unavailable.
-        }
+      try {
+        const guestSession = await startGuestSession()
+        setSession(guestSession)
+        if (experienceMode === 'forecast') await processForecast(statement, forecastDeadline)
+        else await processObjective(statement)
+        return
+      } catch {
+        // Guest auth may be disabled or temporarily unavailable. Fall back to permanent account creation.
       }
 
       setAuthMode('signup')
