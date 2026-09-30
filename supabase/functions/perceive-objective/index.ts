@@ -405,7 +405,7 @@ Deno.serve(async (req: Request) => {
         intentShadowCandidateIds = candidateIds
         const { data: shadowRows, error: shadowError } = await admin
           .from('perception_scenarios')
-          .select('id, scenario_key, title, summary, confidence, intent_keys, route_seed, expires_at')
+          .select('id, scenario_key, title, summary, confidence, intent_keys, route_seed, expires_at, use_count, successful_use_count')
           .eq('user_id', userData.user.id)
           .eq('status', 'active')
           .gt('expires_at', new Date().toISOString())
@@ -436,6 +436,10 @@ Deno.serve(async (req: Request) => {
                 confidence,
                 isFresh: true,
                 matchCount,
+                utilityScore: (
+                  (Number(row.successful_use_count ?? 0) + 1)
+                  / (Number(row.use_count ?? 0) + 2)
+                ),
                 intentKeys,
                 routeSeed: routeSeed?.must_revalidate === true
                   ? {
@@ -662,6 +666,9 @@ Deno.serve(async (req: Request) => {
               confidence: typeof row.confidence === 'number' ? row.confidence : Number(row.confidence ?? 0),
               isFresh: row.is_fresh === true,
               matchCount: typeof row.match_count === 'number' ? row.match_count : Number(row.match_count ?? 0),
+              utilityScore: typeof row.utility_score === 'number'
+                ? row.utility_score
+                : Number(row.utility_score ?? 0.5),
               intentKeys: Array.isArray(row.intent_keys)
                 ? row.intent_keys.filter((value): value is string => typeof value === 'string')
                 : [],
@@ -814,6 +821,57 @@ Deno.serve(async (req: Request) => {
       : null
     let activeRouteId = continuationRouteId ?? routeId
     const localExecutions: Array<Record<string, unknown>> = []
+    let scenarioUtility: Record<string, unknown> = {
+      selected: false,
+      source: 'scenario_utility_learning_v0_10',
+    }
+
+    if (
+      projectId
+      && objectiveId
+      && activeRouteId
+      && routePlan.warmStartScenarioKey
+    ) {
+      const utilityCall = await admin.rpc(
+        'perception_record_scenario_selection_internal',
+        {
+          p_user_id: userData.user.id,
+          p_project_id: projectId,
+          p_objective_id: objectiveId,
+          p_route_id: activeRouteId,
+          p_selected_scenario_key: routePlan.warmStartScenarioKey,
+        },
+      )
+
+      if (
+        !utilityCall.error
+        && utilityCall.data
+        && typeof utilityCall.data === 'object'
+        && !Array.isArray(utilityCall.data)
+      ) {
+        scenarioUtility = {
+          selected: true,
+          source: 'scenario_utility_learning_v0_10',
+          ...(utilityCall.data as Record<string, unknown>),
+        }
+      } else if (
+        utilityCall.error?.code !== 'PGRST202'
+        && utilityCall.error?.code !== '42883'
+      ) {
+        console.error('Perception scenario utility selection failed', {
+          code: utilityCall.error?.code,
+          message: utilityCall.error?.message,
+          project_id: projectId,
+          route_id: activeRouteId,
+          scenario_key: routePlan.warmStartScenarioKey,
+        })
+        scenarioUtility = {
+          selected: false,
+          source: 'scenario_utility_learning_v0_10',
+          error: 'selection_record_failed',
+        }
+      }
+    }
 
     if (projectId && objectiveId && activeRouteId) {
       const readyLocalNodes = routePlan.nodes
@@ -1954,8 +2012,10 @@ Deno.serve(async (req: Request) => {
           title: scenario.title,
           confidence: scenario.confidence,
           match_count: scenario.matchCount,
+          utility_score: scenario.utilityScore ?? 0.5,
           is_fresh: scenario.isFresh,
         })),
+        utility: scenarioUtility,
         forge: scenarioForge,
       },
       token_control: {
