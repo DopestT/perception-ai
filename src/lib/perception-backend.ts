@@ -558,12 +558,14 @@ export async function signOut(): Promise<void> {
 export async function submitObjective(
   statement: string,
   intentShadow?: IntentShadowHandoff,
+  operatorTarget?: string,
 ): Promise<ObjectiveRuntimeResult> {
   const client = requireBackend()
   const { data, error } = await client.functions.invoke<ObjectiveRuntimeResult>('perceive-objective', {
     body: {
       statement,
       ...(intentShadow ? { intent_shadow: intentShadow } : {}),
+      ...(operatorTarget ? { operator_target: operatorTarget } : {}),
     },
   })
   if (error) throw error
@@ -931,6 +933,8 @@ export async function preparePerceptionGitHubSelfTest(): Promise<GitHubOperatorS
 
   const objective = await submitObjective(
     'Create docs/OPERATOR_LIVE_PROOF.md in the Perception GitHub repository on a bounded branch with a short non-secret proof message that says the P1 materializer planned this change. Verify the external effect independently and update Project World without changing main.',
+    undefined,
+    'github://DopestT/perception-ai@main',
   )
   if (!objective.ok || !objective.project_id) {
     throw new Error(objective.stage || 'Could not create the Operator self-test Project World.')
