@@ -91,6 +91,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/034_anticipatory_retrieval_intent_shadow.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260930154726_warm_start_security_invoker.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260930181140_operator_controls_require_permanent_user.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260930184506_scenario_utility_learning_v10.sql
 
       - name: Run Runtime v0.2 security and truth assertions
         run: |
@@ -99,3 +100,4 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f supabase/tests/runtime_v07_scenario_forge_idle_gate.sql
           psql -v ON_ERROR_STOP=1 -f supabase/tests/runtime_v08_intent_shadow_gate.sql
           psql -v ON_ERROR_STOP=1 -f supabase/tests/runtime_security_hardening_gate.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/runtime_v10_scenario_utility_gate.sql

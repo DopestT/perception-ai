@@ -147,4 +147,50 @@ describe('Dynamic Route Planner v0.3', () => {
     expect(route.reason).toContain('must be revalidated')
   })
 
+
+  it('uses learned scenario utility only after relevance ties', () => {
+    const meaning = { ...baseMeaning, knownUnknowns: [] }
+    const mapped = mapProjectReality(meaning, snapshot)
+
+    const plan = planDynamicRealityRoute(meaning, mapped, {
+      availableCapabilities: ['reason', 'generate', 'verify'],
+      warmStartScenarios: [
+        {
+          scenarioKey: 'lower-utility',
+          title: 'Lower utility',
+          summary: 'Previously less useful',
+          confidence: 0.95,
+          isFresh: true,
+          matchCount: 2,
+          utilityScore: 0.25,
+          intentKeys: ['launch'],
+          routeSeed: { must_revalidate: true },
+        },
+        {
+          scenarioKey: 'higher-utility',
+          title: 'Higher utility',
+          summary: 'Previously useful',
+          confidence: 0.8,
+          isFresh: true,
+          matchCount: 2,
+          utilityScore: 0.75,
+          intentKeys: ['launch'],
+          routeSeed: { must_revalidate: true },
+        },
+        {
+          scenarioKey: 'less-relevant',
+          title: 'Less relevant',
+          summary: 'Utility must not beat relevance',
+          confidence: 1,
+          isFresh: true,
+          matchCount: 1,
+          utilityScore: 1,
+          intentKeys: ['launch'],
+          routeSeed: { must_revalidate: true },
+        },
+      ],
+    })
+
+    expect(plan.warmStartScenarioKey).toBe('higher-utility')
+  })
 })
