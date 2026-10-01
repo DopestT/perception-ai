@@ -181,6 +181,7 @@ Deno.serve(async (req: Request) => {
     })
     const { data: userData, error: userError } = await userClient.auth.getUser(token)
     if (userError || !userData.user) return json({ error: 'Invalid session' }, 401)
+    if (userData.user.is_anonymous) return json({ error: 'Growth Operator requires a permanent account' }, 403)
 
     const admin = createClient(url, secretKey, { auth: { persistSession: false, autoRefreshToken: false } })
     const body = await req.json().catch(() => null) as Record<string, unknown> | null
@@ -273,6 +274,19 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action !== 'scan') return json({ error: 'Unknown action' }, 400)
+
+    const { data: recentRun, error: recentRunError } = await admin
+      .from('perception_growth_runs')
+      .select('started_at')
+      .eq('site_id', site.id)
+      .eq('user_id', site.user_id)
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (recentRunError) throw new Error(`Growth scan cooldown lookup failed: ${recentRunError.message}`)
+    if (recentRun?.started_at && Date.now() - new Date(recentRun.started_at).getTime() < 5 * 60 * 1000) {
+      return json({ error: 'A growth scan already ran within the last five minutes' }, 429)
+    }
 
     const rawMaxPages = Number(body?.max_pages ?? 24)
     const maxPages = Math.min(MAX_SCAN_PAGES, Math.max(1, Number.isFinite(rawMaxPages) ? Math.floor(rawMaxPages) : 24))
