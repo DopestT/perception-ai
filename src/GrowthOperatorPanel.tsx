@@ -18,10 +18,10 @@ function numberValue(value: unknown) {
 
 export function GrowthOperatorPanel({ projectId }: Props) {
   const [dashboard, setDashboard] = useState<GrowthDashboard | null>(null)
-  const [siteUrl, setSiteUrl] = useState('https://www.letmeteachyouai.com/')
-  const [repository, setRepository] = useState('DopestT/Let-Me-Teach-You-AI')
-  const [primaryGoal, setPrimaryGoal] = useState('Increase qualified email signups from people learning AI by building practical projects.')
-  const [conversionEvent, setConversionEvent] = useState('newsletter_signup')
+  const [siteUrl, setSiteUrl] = useState('')
+  const [repository, setRepository] = useState('')
+  const [primaryGoal, setPrimaryGoal] = useState('')
+  const [conversionEvent, setConversionEvent] = useState('')
   const [busy, setBusy] = useState<'load' | 'configure' | 'scan' | 'queue' | null>(null)
   const [note, setNote] = useState('')
   const [error, setError] = useState('')
@@ -129,6 +129,25 @@ export function GrowthOperatorPanel({ projectId }: Props) {
           </div>
         )}
       </div>
+
+      {!dashboard?.site && (
+        <div className="growth-operator-actions">
+          <button
+            className="quiet-action"
+            type="button"
+            disabled={Boolean(busy)}
+            onClick={() => {
+              setSiteUrl('https://www.letmeteachyouai.com/')
+              setRepository('DopestT/Let-Me-Teach-You-AI')
+              setPrimaryGoal('Increase qualified email signups from people learning AI by building practical projects.')
+              setConversionEvent('newsletter_signup')
+              setNote('LMTYAI proof configuration loaded. Connect it only to the intended Project World.')
+            }}
+          >
+            LOAD LMTYAI PROOF
+          </button>
+        </div>
+      )}
 
       <form onSubmit={saveConfiguration} className="growth-operator-form">
         <label>
