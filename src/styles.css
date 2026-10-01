@@ -935,3 +935,97 @@ button:disabled { cursor: default; }
   letter-spacing: .12em;
   text-align: center;
 }
+
+
+/* Growth Operator */
+.growth-operator-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 22px;
+}
+.growth-operator-form label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+.growth-operator-form label > span {
+  color: rgba(255,255,255,.38);
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: .14em;
+}
+.growth-operator-form input {
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  padding: 0 12px;
+  color: rgba(255,255,255,.9);
+  outline: 0;
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 10px;
+  background: rgba(255,255,255,.032);
+  font-size: 13px;
+}
+.growth-operator-form input:focus {
+  border-color: rgba(255,255,255,.23);
+  box-shadow: -8px 0 28px rgba(29,195,244,.03), 8px 0 28px rgba(255,115,27,.03);
+}
+.growth-operator-form input:disabled { opacity: .55; }
+.growth-operator-form--wide { grid-column: 1 / -1; }
+.growth-operator-form > button { align-self: end; min-height: 44px; }
+.growth-operator-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.growth-operator-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+.growth-opportunity-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+.growth-opportunity {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 11px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 11px;
+  background: rgba(255,255,255,.018);
+}
+.growth-opportunity-rank {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: rgba(255,255,255,.72);
+  background: rgba(255,255,255,.06);
+  font-size: 11px;
+  font-weight: 800;
+}
+.growth-opportunity strong { display: block; color: rgba(255,255,255,.9); font-size: 13px; }
+.growth-opportunity p { margin: 4px 0; color: rgba(255,255,255,.48); font-size: 12px; line-height: 1.45; }
+.growth-opportunity small { color: rgba(255,255,255,.28); font-size: 9px; }
+.growth-empty {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 16px 0 0;
+  color: rgba(255,255,255,.45);
+  font-size: 11px;
+}
+
+@media (max-width: 720px) {
+  .growth-operator-form { grid-template-columns: 1fr; }
+  .growth-operator-form--wide { grid-column: auto; }
+  .growth-operator-form > button { width: 100%; }
+}

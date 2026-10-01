@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { Check, Clock3, Compass, KeyRound, LogOut, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { ForecastPanel } from './ForecastPanel'
+import { GrowthOperatorPanel } from './GrowthOperatorPanel'
 import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPortal'
 import {
   attachKalshiMarketSignal,
@@ -971,6 +972,8 @@ function App() {
               </div>
             </div>
           )}
+
+          {!isGuest && <GrowthOperatorPanel projectId={world.project.id} />}
 
           <div className="world-grid">
             <article className="world-card world-card--wide">
