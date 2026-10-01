@@ -57,41 +57,55 @@ async function assertPublicDns(url: URL) {
 }
 
 async function fetchDocument(rawUrl: string, accept: string) {
-  const url = new URL(rawUrl)
-  await assertPublicDns(url)
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-  try {
-    const response = await fetch(url, {
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        Accept: accept,
-        'User-Agent': 'Perception-Growth-Operator/0.1 (+https://perceptionai.io)',
-      },
-    })
-    const finalUrl = new URL(response.url || url.href)
-    await assertPublicDns(finalUrl)
-    if (finalUrl.host !== url.host) throw new Error('Cross-host redirects are not allowed for growth scans')
+  let currentUrl = new URL(rawUrl)
+  const originalHost = currentUrl.host
 
-    const declared = Number(response.headers.get('content-length') ?? 0)
-    if (declared > MAX_DOCUMENT_BYTES) {
-      await response.body?.cancel()
-      throw new Error('Document exceeded scan size limit')
-    }
+  for (let redirect = 0; redirect <= 3; redirect += 1) {
+    await assertPublicDns(currentUrl)
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
 
-    const buffer = await response.arrayBuffer()
-    if (buffer.byteLength > MAX_DOCUMENT_BYTES) throw new Error('Document exceeded scan size limit')
-    return {
-      ok: response.ok,
-      status: response.status,
-      body: new TextDecoder().decode(buffer),
-      contentType: response.headers.get('content-type') ?? '',
-      url: finalUrl.href,
+    try {
+      const response = await fetch(currentUrl, {
+        redirect: 'manual',
+        signal: controller.signal,
+        headers: {
+          Accept: accept,
+          'User-Agent': 'Perception-Growth-Operator/0.1 (+https://perceptionai.io)',
+        },
+      })
+
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location')
+        await response.body?.cancel()
+        if (!location || redirect === 3) throw new Error('Redirect limit exceeded during growth scan')
+        const nextUrl = new URL(location, currentUrl)
+        if (nextUrl.host !== originalHost) throw new Error('Cross-host redirects are not allowed for growth scans')
+        currentUrl = nextUrl
+        continue
+      }
+
+      const declared = Number(response.headers.get('content-length') ?? 0)
+      if (declared > MAX_DOCUMENT_BYTES) {
+        await response.body?.cancel()
+        throw new Error('Document exceeded scan size limit')
+      }
+
+      const buffer = await response.arrayBuffer()
+      if (buffer.byteLength > MAX_DOCUMENT_BYTES) throw new Error('Document exceeded scan size limit')
+      return {
+        ok: response.ok,
+        status: response.status,
+        body: new TextDecoder().decode(buffer),
+        contentType: response.headers.get('content-type') ?? '',
+        url: currentUrl.href,
+      }
+    } finally {
+      clearTimeout(timeout)
     }
-  } finally {
-    clearTimeout(timeout)
   }
+
+  throw new Error('Growth scan could not fetch the document')
 }
 
 async function endpointExists(url: string) {
