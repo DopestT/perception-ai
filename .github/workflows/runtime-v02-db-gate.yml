@@ -93,6 +93,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260930181140_operator_controls_require_permanent_user.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260930184506_scenario_utility_learning_v10.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/20260930192306_external_anticipatory_search_preferences_v11.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261001171000_growth_operator_v01.sql
 
       - name: Run Runtime v0.2 security and truth assertions
         run: |
@@ -103,3 +104,4 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f supabase/tests/runtime_security_hardening_gate.sql
           psql -v ON_ERROR_STOP=1 -f supabase/tests/runtime_v10_scenario_utility_gate.sql
           psql -v ON_ERROR_STOP=1 -f supabase/tests/runtime_v11_external_presearch_gate.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/growth_operator_v01_gate.sql
