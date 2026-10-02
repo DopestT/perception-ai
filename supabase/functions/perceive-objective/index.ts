@@ -8,6 +8,7 @@ import { buildGitHubActionContract, repositoryFromGitHubLocator } from '../_shar
 import { materializeGitHubCodePlan, type GitHubCodePlanResult } from '../_shared/code-plan-materializer.ts'
 import { materializeLocalArtifact, verifyLocalArtifact } from '../_shared/local-runtime.ts'
 import { isVerifiedGitHubOperatorAttachment, parseGitHubOperatorTarget } from '../_shared/operator-attachment.ts'
+import { mergeSourceRefs, normalizeSourceRefs } from '../_shared/source-refs.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -224,10 +225,12 @@ Deno.serve(async (req: Request) => {
       objective_id?: unknown
       intent_shadow?: unknown
       operator_target?: unknown
+      source_refs?: unknown
     } | null
     const action = payload?.action === 'resume' ? 'resume' : 'submit'
     const requestedProjectId = typeof payload?.project_id === 'string' ? payload.project_id.trim() : ''
     const requestedObjectiveId = typeof payload?.objective_id === 'string' ? payload.objective_id.trim() : ''
+    const requestedSourceRefs = action === 'submit' ? normalizeSourceRefs(payload?.source_refs) : []
     let statement = typeof payload?.statement === 'string' ? payload.statement.trim() : ''
 
     if (action === 'submit') {
@@ -613,6 +616,44 @@ Deno.serve(async (req: Request) => {
     const projectId = typeof runtimeResult.project_id === 'string' ? runtimeResult.project_id : null
     const objectiveId = typeof runtimeResult.objective_id === 'string' ? runtimeResult.objective_id : null
     const routeId = typeof runtimeResult.route_id === 'string' ? runtimeResult.route_id : null
+
+    let sourceRefsAccepted = 0
+    if (action === 'submit' && objectiveId && requestedSourceRefs.length > 0) {
+      const existingSourceRefs = await admin
+        .from('perception_objectives')
+        .select('source_refs')
+        .eq('id', objectiveId)
+        .eq('user_id', userData.user.id)
+        .maybeSingle()
+
+      if (existingSourceRefs.error) {
+        console.error('Perception source context lookup failed', {
+          code: existingSourceRefs.error.code,
+          message: existingSourceRefs.error.message,
+          objective_id: objectiveId,
+        })
+      } else {
+        const mergedSourceRefs = mergeSourceRefs(existingSourceRefs.data?.source_refs, requestedSourceRefs)
+        const sourceRefUpdate = await admin
+          .from('perception_objectives')
+          .update({
+            source_refs: mergedSourceRefs,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', objectiveId)
+          .eq('user_id', userData.user.id)
+
+        if (sourceRefUpdate.error) {
+          console.error('Perception source context persistence failed', {
+            code: sourceRefUpdate.error.code,
+            message: sourceRefUpdate.error.message,
+            objective_id: objectiveId,
+          })
+        } else {
+          sourceRefsAccepted = requestedSourceRefs.length
+        }
+      }
+    }
 
     let operatorSourceBound = false
     if (projectId && verifiedOperatorAttachment && verifiedOperatorSourceId) {
@@ -2099,6 +2140,10 @@ Deno.serve(async (req: Request) => {
         source_bound: operatorSourceBound,
         read_credential_present: Boolean(githubReadToken),
         code_attached: operatorCapabilities.includes('code'),
+      },
+      source_context: {
+        requested: requestedSourceRefs.length,
+        accepted: sourceRefsAccepted,
       },
       warm_start: {
         loaded: warmStartScenarios.length > 0,
