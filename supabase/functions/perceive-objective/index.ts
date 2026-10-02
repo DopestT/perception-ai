@@ -1474,6 +1474,108 @@ Deno.serve(async (req: Request) => {
     const usageEvidence: Array<Record<string, unknown>> = []
 
     if (projectId) {
+      const { data: sourceBindings, error: sourceBindingError } = await admin
+        .from('perception_project_source_bindings')
+        .select('source_id, relationship, active')
+        .eq('project_id', projectId)
+        .eq('active', true)
+
+      let actionSources: ActionContractSourceContext[] = []
+      if (sourceBindingError) {
+        console.error('Perception action-contract source lookup failed', {
+          code: sourceBindingError.code,
+          message: sourceBindingError.message,
+        })
+      } else {
+        const sourceIds = (sourceBindings ?? [])
+          .map((binding) => typeof binding.source_id === 'string' ? binding.source_id : null)
+          .filter((sourceId): sourceId is string => Boolean(sourceId))
+
+        if (sourceIds.length > 0) {
+          const [{ data: sources, error: sourcesError }, { data: observations, error: observationsError }] = await Promise.all([
+            admin
+              .from('perception_sources')
+              .select('id, source_type, provider, external_id, enabled, metadata, last_observed_at, freshness_sla_minutes')
+              .in('id', sourceIds),
+            admin
+              .from('perception_source_observations')
+              .select('source_id, payload, observed_at')
+              .in('source_id', sourceIds)
+              .order('observed_at', { ascending: false })
+              .limit(100),
+          ])
+
+          if (sourcesError) {
+            console.error('Perception action-contract sources unavailable', {
+              code: sourcesError.code,
+              message: sourcesError.message,
+            })
+          } else {
+            if (observationsError) {
+              console.error('Perception action-contract observations unavailable', {
+                code: observationsError.code,
+                message: observationsError.message,
+              })
+            }
+
+            const relationshipBySource = new Map(
+              (sourceBindings ?? []).map((binding) => [binding.source_id, binding.relationship]),
+            )
+
+            actionSources = (sources ?? []).map((source) => {
+              const metadata = source.metadata && typeof source.metadata === 'object' && !Array.isArray(source.metadata)
+                ? source.metadata as Record<string, unknown>
+                : {}
+              const observation = (observations ?? []).find((candidate) => candidate.source_id === source.id)
+              const observationPayload = observation?.payload && typeof observation.payload === 'object' && !Array.isArray(observation.payload)
+                ? observation.payload as Record<string, unknown>
+                : {}
+              const metadataDefault = typeof metadata.default_branch === 'string'
+                ? metadata.default_branch
+                : typeof metadata.defaultBranch === 'string'
+                  ? metadata.defaultBranch
+                  : null
+              const observedDefault = typeof observationPayload.default_branch === 'string'
+                ? observationPayload.default_branch
+                : typeof observationPayload.defaultBranch === 'string'
+                  ? observationPayload.defaultBranch
+                  : null
+
+              return {
+                sourceType: String(source.source_type ?? ''),
+                provider: String(source.provider ?? ''),
+                externalId: String(source.external_id ?? ''),
+                relationship: String(relationshipBySource.get(source.id) ?? 'unknown'),
+                enabled: source.enabled !== false,
+                defaultBranch: metadataDefault || observedDefault,
+                observedAt: observation?.observed_at || source.last_observed_at || null,
+                freshnessSlaMinutes: Number(source.freshness_sla_minutes ?? 1440) || 1440,
+              }
+            })
+          }
+        }
+      }
+
+      const persistedRouteNodes = activeRouteId
+        ? await admin
+            .from('perception_route_nodes')
+            .select('id, sort_order')
+            .eq('project_id', projectId)
+            .eq('route_id', activeRouteId)
+            .order('sort_order', { ascending: true })
+        : { data: [], error: null }
+
+      if (persistedRouteNodes.error) {
+        console.error('Perception persisted route-node lookup failed', {
+          code: persistedRouteNodes.error.code,
+          message: persistedRouteNodes.error.message,
+        })
+      }
+
+      const continuationPlanNodes = routePlan.nodes.filter((candidate) =>
+        !['resolve-meaning', 'first-reversible-action', 'verify-first-action'].includes(candidate.key)
+      )
+
       for (const decision of capabilityRouting.filter((candidate) => candidate.executionMode === 'external')) {
         const routeNode = routePlan.nodes.find((node) => node.key === decision.nodeKey)
         let actionContract: ReturnType<typeof buildGitHubActionContract> | null = null
@@ -1789,7 +1891,7 @@ Deno.serve(async (req: Request) => {
           project_id: projectId,
           objective_id: objectiveId,
           route_id: activeRouteId,
-          route_node_id: null,
+          route_node_id: routeNodeId,
           worker_run_id: null,
           action_key: actionContract?.action_key
             ?? `capability_route:${objectiveId ?? crypto.randomUUID()}:${decision.nodeKey}`,
@@ -1799,7 +1901,7 @@ Deno.serve(async (req: Request) => {
           target: actionContract?.target ?? null,
           details: {
             adapter: decision.adapter,
-            routing_status: decision.status,
+            routing_status: routingStatus,
             execution_mode: decision.executionMode,
             permission_required: decision.permissionRequired,
             required_input_fields: decision.requiredInputFields,

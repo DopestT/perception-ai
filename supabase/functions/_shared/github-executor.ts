@@ -20,8 +20,8 @@ const allowedSha = /^[0-9a-f]{40}$/i
 
 export function validateGitHubExecutionRequest(input: GitHubExecutionRequest): string[] {
   const failures: string[] = []
-  const baseBranch = input.base_branch || 'main'
-  const target = `github://${input.repository}@${baseBranch}`
+  const baseBranch = input.base_branch
+  const target = baseBranch ? `github://${input.repository}@${baseBranch}` : null
 
   if (!allowedRepository.test(input.repository)) failures.push('Repository must use owner/name format.')
   if (!allowedSha.test(input.expected_base_sha || '')) failures.push('A materialized 40-character base commit SHA is required.')
@@ -111,7 +111,7 @@ export async function executeBoundedGitHubChange(input: GitHubExecutionRequest, 
   const failures = validateGitHubExecutionRequest(input)
   if (failures.length) return { ok: false, phase: 'blocked', failures }
 
-  const baseBranch = input.base_branch || 'main'
+  const baseBranch = input.base_branch
   const [owner, repository] = input.repository.split('/')
   const api = `https://api.github.com/repos/${owner}/${repository}`
   const base = await githubJson(token, `${api}/git/ref/heads/${encodeURIComponent(baseBranch)}`)
