@@ -24,6 +24,7 @@ export function validateGitHubExecutionRequest(input: GitHubExecutionRequest): s
   const target = baseBranch ? `github://${input.repository}@${baseBranch}` : null
 
   if (!allowedRepository.test(input.repository)) failures.push('Repository must use owner/name format.')
+  if (!baseBranch || !allowedBranch.test(baseBranch) || baseBranch.includes('..')) failures.push('An explicit valid base branch is required.')
   if (!allowedSha.test(input.expected_base_sha || '')) failures.push('A materialized 40-character base commit SHA is required.')
   if (!allowedBranch.test(input.branch) || input.branch.includes('..')) failures.push('Branch name is invalid.')
   if (input.branch === baseBranch) failures.push('Operator writes must use a bounded branch, never the base branch.')
