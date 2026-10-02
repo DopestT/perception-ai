@@ -1,9 +1,13 @@
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { governTask, routeModelTargets, type ModelPrice, type ModelProtocol, type ModelTarget } from '../_shared/token-efficiency.ts'
-import { resolveObjectiveMeaning } from '../_shared/meaning-resolver.ts'
-import { planInitialRealityRoute } from '../_shared/reality-planner.ts'
+import { deterministicMeaning, resolveObjectiveMeaning, type ResolvedObjectiveMeaning } from '../_shared/meaning-resolver.ts'
+import { planDynamicRealityRoute, type WarmStartScenario } from '../_shared/reality-planner.ts'
+import { mapProjectReality, type ProjectRealitySnapshot } from '../_shared/reality-mapper.ts'
 import { routePlannedCapabilities } from '../_shared/capability-router.ts'
-import { resolveActionContract, type ActionContractSourceContext, type PlannedGitHubFile } from '../_shared/action-contract-resolver.ts'
+import { buildGitHubActionContract, repositoryFromGitHubLocator } from '../_shared/action-contract.ts'
+import { materializeGitHubCodePlan, type GitHubCodePlanResult } from '../_shared/code-plan-materializer.ts'
+import { materializeLocalArtifact, verifyLocalArtifact } from '../_shared/local-runtime.ts'
+import { isVerifiedGitHubOperatorAttachment, parseGitHubOperatorTarget } from '../_shared/operator-attachment.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -16,6 +20,79 @@ const json = (body: unknown, status = 200) =>
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
+
+function leftText(value: string, limit: number): string {
+  return value.length <= limit ? value : value.slice(0, limit)
+}
+
+type ResumeObjectiveRow = {
+  id: string
+  project_id: string
+  statement: string
+  desired_reality: string
+  current_reality: string
+  constraints: unknown
+  success_criteria: unknown
+  deliverables: unknown
+  known_unknowns: unknown
+  urgency: string
+  meaning: unknown
+  meaning_source: string | null
+  meaning_confidence: number | null
+}
+
+function stringArray(value: unknown, limit = 12): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, limit)
+}
+
+function storedObjectiveMeaning(row: ResumeObjectiveRow): ResolvedObjectiveMeaning {
+  const fallback = deterministicMeaning(row.statement)
+  const stored = row.meaning && typeof row.meaning === 'object' && !Array.isArray(row.meaning)
+    ? row.meaning as Record<string, unknown>
+    : {}
+  const urgency = ['low', 'normal', 'high', 'critical'].includes(row.urgency)
+    ? row.urgency as ResolvedObjectiveMeaning['urgency']
+    : fallback.urgency
+  const inferredClaims = Array.isArray(stored.inferred_claims)
+    ? stored.inferred_claims
+        .filter((claim): claim is Record<string, unknown> => Boolean(claim && typeof claim === 'object' && !Array.isArray(claim)))
+        .map((claim) => ({
+          claim_key: typeof claim.claim_key === 'string' ? claim.claim_key.trim().slice(0, 160) : '',
+          statement: typeof claim.statement === 'string' ? claim.statement.trim().slice(0, 2000) : '',
+          confidence: typeof claim.confidence === 'number' && Number.isFinite(claim.confidence)
+            ? Math.max(0, Math.min(1, claim.confidence))
+            : 0.5,
+          route_impact: typeof claim.route_impact === 'string' ? claim.route_impact.trim().slice(0, 1000) : '',
+        }))
+        .filter((claim) => claim.claim_key && claim.statement)
+        .slice(0, 12)
+    : []
+
+  return {
+    ...fallback,
+    desired_reality: row.desired_reality || fallback.desired_reality,
+    current_reality: row.current_reality || fallback.current_reality,
+    constraints: stringArray(row.constraints),
+    success_criteria: stringArray(row.success_criteria),
+    deliverables: stringArray(row.deliverables),
+    urgency,
+    known_unknowns: stringArray(row.known_unknowns),
+    inferred_claims: inferredClaims,
+    confidence: typeof row.meaning_confidence === 'number' && Number.isFinite(row.meaning_confidence)
+      ? Math.max(0, Math.min(1, row.meaning_confidence))
+      : fallback.confidence,
+    source: row.meaning_source === 'openai' ? 'openai' : 'deterministic_fallback',
+    provider: null,
+    model: null,
+    routing_attempts: [],
+    usage: undefined,
+  }
+}
 
 function numericEnv(name: string, fallback = 0): number {
   const value = Number(Deno.env.get(name) ?? '')
@@ -142,24 +219,247 @@ Deno.serve(async (req: Request) => {
 
     const payload = await req.json().catch(() => null) as {
       statement?: unknown
-      execution?: { files?: unknown }
+      action?: unknown
+      project_id?: unknown
+      objective_id?: unknown
+      intent_shadow?: unknown
+      operator_target?: unknown
     } | null
-    const statement = typeof payload?.statement === 'string' ? payload.statement.trim() : ''
-    const executionFiles: PlannedGitHubFile[] = Array.isArray(payload?.execution?.files)
-      ? payload.execution.files.flatMap((candidate) => {
-          if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return []
-          const value = candidate as Record<string, unknown>
-          if (typeof value.path !== 'string' || typeof value.content !== 'string') return []
-          const path = value.path.trim()
-          return path ? [{ path, content: value.content }] : []
-        })
-      : []
-    if (statement.length < 3) return json({ error: 'Objective must contain at least 3 characters' }, 400)
-    if (statement.length > 10000) return json({ error: 'Objective is too long' }, 413)
+    const action = payload?.action === 'resume' ? 'resume' : 'submit'
+    const requestedProjectId = typeof payload?.project_id === 'string' ? payload.project_id.trim() : ''
+    const requestedObjectiveId = typeof payload?.objective_id === 'string' ? payload.objective_id.trim() : ''
+    let statement = typeof payload?.statement === 'string' ? payload.statement.trim() : ''
+
+    if (action === 'submit') {
+      if (statement.length < 3) return json({ error: 'Objective must contain at least 3 characters' }, 400)
+      if (statement.length > 10000) return json({ error: 'Objective is too long' }, 413)
+    } else if (!requestedProjectId && !requestedObjectiveId) {
+      return json({ error: 'Resume requires project_id or objective_id' }, 400)
+    }
 
     const admin = createClient(url, secretKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     })
+
+    const explicitOperatorTarget = action === 'submit'
+      ? parseGitHubOperatorTarget(payload?.operator_target)
+      : null
+    const selfTestOperatorTarget = action === 'submit'
+      && statement.includes('docs/OPERATOR_LIVE_PROOF.md')
+      ? parseGitHubOperatorTarget('github://DopestT/perception-ai@main')
+      : null
+    const requestedOperatorTarget = explicitOperatorTarget ?? selfTestOperatorTarget
+    const githubReadToken = (
+      Deno.env.get('PERCEPTION_GITHUB_TOKEN')
+      || Deno.env.get('PERCEPTION_OPERATOR_TOKEN')
+      || ''
+    ).trim()
+    let verifiedOperatorSourceId: string | null = null
+    let operatorPrincipalEnabled = false
+    let operatorSourceEnabled = false
+
+    if (requestedOperatorTarget) {
+      const [principalResult, sourceResult] = await Promise.all([
+        admin
+          .from('perception_operator_principals')
+          .select('id')
+          .eq('user_id', userData.user.id)
+          .eq('capability', 'code')
+          .eq('target', requestedOperatorTarget.target)
+          .eq('enabled', true)
+          .limit(1)
+          .maybeSingle(),
+        admin
+          .from('perception_sources')
+          .select('id')
+          .eq('user_id', userData.user.id)
+          .eq('provider', 'github')
+          .eq('source_type', 'github_repo')
+          .eq('external_id', requestedOperatorTarget.repository)
+          .eq('enabled', true)
+          .limit(1)
+          .maybeSingle(),
+      ])
+
+      if (principalResult.error) {
+        console.error('Perception operator principal lookup failed', {
+          code: principalResult.error.code,
+          message: principalResult.error.message,
+        })
+      }
+      if (sourceResult.error) {
+        console.error('Perception operator source lookup failed', {
+          code: sourceResult.error.code,
+          message: sourceResult.error.message,
+        })
+      }
+
+      operatorPrincipalEnabled = Boolean(principalResult.data?.id)
+      operatorSourceEnabled = Boolean(sourceResult.data?.id)
+      verifiedOperatorSourceId = sourceResult.data?.id ?? null
+    }
+
+    const verifiedOperatorAttachment = isVerifiedGitHubOperatorAttachment({
+      target: requestedOperatorTarget,
+      principalEnabled: operatorPrincipalEnabled,
+      sourceEnabled: operatorSourceEnabled,
+      readCredentialPresent: Boolean(githubReadToken),
+    })
+
+    let intentShadowWarmStarts: WarmStartScenario[] = []
+    let intentShadowCandidateIds: string[] = []
+    let intentShadowAccepted = false
+
+    const failLocalWorker = async (
+      workerRunId: string,
+      leaseToken: string,
+      failureCode: string,
+      failureText: string,
+      retryDelaySeconds = 30,
+    ) => {
+      const failureCall = await admin.rpc('perception_fail_local_worker_internal', {
+        p_worker_run_id: workerRunId,
+        p_lease_token: leaseToken,
+        p_failure_code: failureCode,
+        p_failure_text: leftText(failureText, 2000),
+        p_retry_delay_seconds: retryDelaySeconds,
+      })
+      if (failureCall.error) {
+        console.error('Perception local worker failure persistence failed', {
+          code: failureCall.error.code,
+          message: failureCall.error.message,
+          worker_run_id: workerRunId,
+        })
+      }
+    }
+
+    let resumeObjective: ResumeObjectiveRow | null = null
+    if (action === 'resume') {
+      const objectiveColumns = [
+        'id',
+        'project_id',
+        'statement',
+        'desired_reality',
+        'current_reality',
+        'constraints',
+        'success_criteria',
+        'deliverables',
+        'known_unknowns',
+        'urgency',
+        'meaning',
+        'meaning_source',
+        'meaning_confidence',
+      ].join(',')
+
+      const objectiveResult = requestedObjectiveId
+        ? await admin
+            .from('perception_objectives')
+            .select(objectiveColumns)
+            .eq('id', requestedObjectiveId)
+            .eq('user_id', userData.user.id)
+            .maybeSingle()
+        : await admin
+            .from('perception_objectives')
+            .select(objectiveColumns)
+            .eq('project_id', requestedProjectId)
+            .eq('user_id', userData.user.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+      if (objectiveResult.error) {
+        console.error('Perception resume objective lookup failed', {
+          code: objectiveResult.error.code,
+          message: objectiveResult.error.message,
+        })
+        return json({ error: 'Could not load the objective to resume' }, 500)
+      }
+
+      if (!objectiveResult.data) return json({ error: 'Objective to resume was not found' }, 404)
+
+      resumeObjective = objectiveResult.data as unknown as ResumeObjectiveRow
+      if (requestedProjectId && resumeObjective.project_id !== requestedProjectId) {
+        return json({ error: 'Objective does not belong to the requested project' }, 400)
+      }
+
+      statement = resumeObjective.statement.trim()
+      if (statement.length < 3) return json({ error: 'Stored objective is not resumable' }, 409)
+    }
+
+    if (action === 'submit' && payload?.intent_shadow && typeof payload.intent_shadow === 'object' && !Array.isArray(payload.intent_shadow)) {
+      const shadow = payload.intent_shadow as Record<string, unknown>
+      const preparedAt = typeof shadow.prepared_at === 'string' ? new Date(shadow.prepared_at).getTime() : NaN
+      const ageMs = Number.isFinite(preparedAt) ? Date.now() - preparedAt : Number.POSITIVE_INFINITY
+      const candidateIds = Array.isArray(shadow.candidate_scenario_ids)
+        ? shadow.candidate_scenario_ids
+            .filter((value): value is string => typeof value === 'string' && /^[0-9a-f-]{36}$/i.test(value))
+            .slice(0, 6)
+        : []
+
+      if (
+        shadow.source === 'intent_shadow_v0_8'
+        && ageMs >= -5_000
+        && ageMs <= 120_000
+        && candidateIds.length > 0
+      ) {
+        intentShadowCandidateIds = candidateIds
+        const { data: shadowRows, error: shadowError } = await admin
+          .from('perception_scenarios')
+          .select('id, scenario_key, title, summary, confidence, intent_keys, route_seed, expires_at, use_count, successful_use_count')
+          .eq('user_id', userData.user.id)
+          .eq('status', 'active')
+          .gt('expires_at', new Date().toISOString())
+          .in('id', candidateIds)
+
+        if (shadowError) {
+          console.error('Perception intent shadow revalidation failed', {
+            code: shadowError.code,
+            message: shadowError.message,
+          })
+        } else {
+          const normalizedStatement = statement.toLowerCase()
+          intentShadowWarmStarts = (shadowRows ?? [])
+            .map((row) => {
+              const intentKeys = Array.isArray(row.intent_keys)
+                ? row.intent_keys.filter((value): value is string => typeof value === 'string')
+                : []
+              const routeSeed = row.route_seed && typeof row.route_seed === 'object' && !Array.isArray(row.route_seed)
+                ? row.route_seed as Record<string, unknown>
+                : undefined
+              const matchCount = intentKeys.filter((key) => normalizedStatement.includes(key.toLowerCase())).length
+              const confidence = typeof row.confidence === 'number' ? row.confidence : Number(row.confidence ?? 0)
+
+              return {
+                scenarioKey: `intent-shadow:${row.id}`,
+                title: typeof row.title === 'string' ? row.title : 'Prepared route context',
+                summary: typeof row.summary === 'string' ? row.summary : '',
+                confidence,
+                isFresh: true,
+                matchCount,
+                utilityScore: (
+                  (Number(row.successful_use_count ?? 0) + 1)
+                  / (Number(row.use_count ?? 0) + 2)
+                ),
+                intentKeys,
+                routeSeed: routeSeed?.must_revalidate === true
+                  ? {
+                      ...routeSeed,
+                      source: 'intent_shadow_v0_8',
+                      must_revalidate: true,
+                    }
+                  : undefined,
+              } satisfies WarmStartScenario
+            })
+            .filter((scenario) =>
+              scenario.routeSeed?.must_revalidate === true
+              && Number.isFinite(scenario.confidence)
+              && scenario.confidence >= 0
+              && scenario.confidence <= 1
+            )
+          intentShadowAccepted = intentShadowWarmStarts.length > 0
+        }
+      }
+    }
 
     const { data: policy } = await admin
       .from('perception_token_policies')
@@ -205,93 +505,972 @@ Deno.serve(async (req: Request) => {
       budgetPressure,
     })
 
-    const meaning = await resolveObjectiveMeaning(statement, {
-      candidates: modelRoute.candidates,
-      maxOutputTokens: tokenDecision.maxOutputTokens,
-    })
+    const meaning = resumeObjective
+      ? storedObjectiveMeaning(resumeObjective)
+      : await resolveObjectiveMeaning(statement, {
+          candidates: modelRoute.candidates,
+          maxOutputTokens: tokenDecision.maxOutputTokens,
+        })
 
     const runtimeCapabilities = ['reason', 'generate', 'verify'] as const
-    const operatorCapabilities = ((Deno.env.get('PERCEPTION_OPERATOR_CAPABILITIES') || Deno.env.get('PERCEPTION_OPERATOR_CAPIBILITIES')) ?? '')
+    const configuredOperatorCapabilities = ((Deno.env.get('PERCEPTION_OPERATOR_CAPABILITIES') || Deno.env.get('PERCEPTION_OPERATOR_CAPIBILITIES')) ?? '')
       .split(',')
       .map((value) => value.trim())
       .filter((value) => value.length > 0)
+    const operatorCapabilities = Array.from(new Set([
+      ...configuredOperatorCapabilities,
+      ...(verifiedOperatorAttachment ? ['code'] : []),
+    ]))
 
     const availableCapabilities = Array.from(new Set([
       ...runtimeCapabilities,
       ...operatorCapabilities,
     ]))
 
-    const routePlan = planInitialRealityRoute({
+    const plannerMeaning = {
       desiredReality: meaning.desired_reality,
       currentReality: meaning.current_reality,
       constraints: meaning.constraints,
       successCriteria: meaning.success_criteria,
       deliverables: meaning.deliverables,
       knownUnknowns: meaning.known_unknowns,
-    }, {
-      availableCapabilities: availableCapabilities.filter((capability) =>
-        ['reason', 'research', 'retrieve', 'generate', 'edit', 'code', 'communicate', 'schedule', 'calculate', 'verify']
-          .includes(capability)
-      ) as Array<'reason' | 'research' | 'retrieve' | 'generate' | 'edit' | 'code' | 'communicate' | 'schedule' | 'calculate' | 'verify'>,
-    })
+    }
 
-    const capabilityRouting = routePlannedCapabilities(routePlan.nodes, {
-      githubOperatorAttached: operatorCapabilities.includes('code'),
-    })
+    const plannerCapabilities = availableCapabilities.filter((capability) =>
+      ['reason', 'research', 'retrieve', 'generate', 'edit', 'code', 'communicate', 'schedule', 'calculate', 'verify']
+        .includes(capability)
+    ) as Array<'reason' | 'research' | 'retrieve' | 'generate' | 'edit' | 'code' | 'communicate' | 'schedule' | 'calculate' | 'verify'>
 
-    let runtimeData: unknown
-    let runtimeError: { code?: string; message?: string } | null = null
+    let runtimeResult: Record<string, unknown> = {}
 
-    const plannedCall = await admin.rpc('perception_submit_planned_objective_internal', {
-      p_user_id: userData.user.id,
-      p_statement: statement,
-      p_semantics: meaning,
-      p_plan: routePlan,
-    })
+    if (resumeObjective) {
+      const { data: resumeRoute, error: resumeRouteError } = await admin
+        .from('perception_routes')
+        .select('id, version, active')
+        .eq('user_id', userData.user.id)
+        .eq('project_id', resumeObjective.project_id)
+        .eq('objective_id', resumeObjective.id)
+        .order('active', { ascending: false })
+        .order('version', { ascending: false })
+        .limit(1)
+        .maybeSingle()
 
-    runtimeData = plannedCall.data
-    runtimeError = plannedCall.error
+      if (resumeRouteError) {
+        console.error('Perception resume route lookup failed', {
+          code: resumeRouteError.code,
+          message: resumeRouteError.message,
+        })
+        return json({ error: 'Could not load the route to resume' }, 500)
+      }
 
-    // Roll back one runtime generation at a time so previews remain functional before migrations land.
-    if (runtimeError?.code === 'PGRST202' || runtimeError?.code === '42883') {
+      if (!resumeRoute?.id) return json({ error: 'Stored objective has no resumable route' }, 409)
+
+      runtimeResult = {
+        ok: true,
+        stages: ['UNDERSTOOD', 'PROJECT WORLD CREATED', 'REALITY ROUTE CREATED'],
+        project_id: resumeObjective.project_id,
+        objective_id: resumeObjective.id,
+        route_id: resumeRoute.id,
+        resumed: true,
+      }
+    } else {
+      let runtimeData: unknown
+      let runtimeError: { code?: string; message?: string } | null = null
+
+      // Establish a verified first Project World state before mapping the continuation route.
+      // This prevents pre-Project heuristics from being mistaken for observed reality.
       const resolvedCall = await admin.rpc('perception_submit_resolved_objective_internal', {
         p_user_id: userData.user.id,
         p_statement: statement,
         p_semantics: meaning,
       })
+
       runtimeData = resolvedCall.data
       runtimeError = resolvedCall.error
+
+      if (runtimeError?.code === 'PGRST202' || runtimeError?.code === '42883') {
+        const fallbackCall = await admin.rpc('perception_submit_objective_internal', {
+          p_user_id: userData.user.id,
+          p_statement: statement,
+        })
+        runtimeData = fallbackCall.data
+        runtimeError = fallbackCall.error
+      }
+
+      if (runtimeError) {
+        console.error('Perception objective runtime failed', {
+          code: runtimeError.code,
+          message: runtimeError.message,
+        })
+        return json({ error: 'Objective runtime failed' }, 500)
+      }
+
+      runtimeResult = runtimeData && typeof runtimeData === 'object' && !Array.isArray(runtimeData)
+        ? runtimeData as Record<string, unknown>
+        : {}
     }
 
-    if (runtimeError?.code === 'PGRST202' || runtimeError?.code === '42883') {
-      const fallbackCall = await admin.rpc('perception_submit_objective_internal', {
-        p_user_id: userData.user.id,
-        p_statement: statement,
-      })
-      runtimeData = fallbackCall.data
-      runtimeError = fallbackCall.error
-    }
-
-    if (runtimeError) {
-      console.error('Perception objective runtime failed', {
-        code: runtimeError.code,
-        message: runtimeError.message,
-      })
-      return json({ error: 'Objective runtime failed' }, 500)
-    }
-
-    const runtimeResult = runtimeData && typeof runtimeData === 'object' && !Array.isArray(runtimeData)
-      ? runtimeData as Record<string, unknown>
-      : {}
     const projectId = typeof runtimeResult.project_id === 'string' ? runtimeResult.project_id : null
     const objectiveId = typeof runtimeResult.objective_id === 'string' ? runtimeResult.objective_id : null
     const routeId = typeof runtimeResult.route_id === 'string' ? runtimeResult.route_id : null
+
+    let operatorSourceBound = false
+    if (projectId && verifiedOperatorAttachment && verifiedOperatorSourceId) {
+      const { error: bindingError } = await admin
+        .from('perception_project_source_bindings')
+        .upsert({
+          user_id: userData.user.id,
+          project_id: projectId,
+          source_id: verifiedOperatorSourceId,
+          relationship: 'primary',
+          active: true,
+          updated_at: new Date().toISOString(),
+        }, {
+          onConflict: 'project_id,source_id',
+        })
+
+      if (bindingError) {
+        console.error('Perception verified operator source attachment failed', {
+          code: bindingError.code,
+          message: bindingError.message,
+          project_id: projectId,
+          target: requestedOperatorTarget?.target ?? null,
+        })
+      } else {
+        operatorSourceBound = true
+      }
+    }
+
+    let warmStartScenarios: WarmStartScenario[] = []
+    if (projectId) {
+      const warmStartCall = await userClient.rpc('perception_get_warm_start', {
+        p_project_id: projectId,
+        p_objective_text: statement,
+        p_limit: 3,
+      })
+
+      if (
+        !warmStartCall.error
+        && warmStartCall.data
+        && typeof warmStartCall.data === 'object'
+        && !Array.isArray(warmStartCall.data)
+      ) {
+        const rows = (warmStartCall.data as Record<string, unknown>).scenarios
+        if (Array.isArray(rows)) {
+          warmStartScenarios = rows
+            .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object' && !Array.isArray(row)))
+            .map((row) => ({
+              scenarioKey: typeof row.scenario_key === 'string' ? row.scenario_key : '',
+              title: typeof row.title === 'string' ? row.title : '',
+              summary: typeof row.summary === 'string' ? row.summary : '',
+              confidence: typeof row.confidence === 'number' ? row.confidence : Number(row.confidence ?? 0),
+              isFresh: row.is_fresh === true,
+              matchCount: typeof row.match_count === 'number' ? row.match_count : Number(row.match_count ?? 0),
+              utilityScore: typeof row.utility_score === 'number'
+                ? row.utility_score
+                : Number(row.utility_score ?? 0.5),
+              intentKeys: Array.isArray(row.intent_keys)
+                ? row.intent_keys.filter((value): value is string => typeof value === 'string')
+                : [],
+              routeSeed: row.route_seed && typeof row.route_seed === 'object' && !Array.isArray(row.route_seed)
+                ? row.route_seed as Record<string, unknown>
+                : undefined,
+            }))
+            .filter((scenario) => scenario.scenarioKey && Number.isFinite(scenario.confidence))
+        }
+      } else if (
+        warmStartCall.error?.code !== 'PGRST202'
+        && warmStartCall.error?.code !== '42883'
+      ) {
+        console.error('Perception warm-start lookup failed', {
+          code: warmStartCall.error?.code,
+          message: warmStartCall.error?.message,
+          project_id: projectId,
+        })
+      }
+    }
+
+    if (intentShadowWarmStarts.length > 0) {
+      const merged = [...warmStartScenarios, ...intentShadowWarmStarts]
+      const seen = new Set<string>()
+      warmStartScenarios = merged.filter((scenario) => {
+        const key = scenario.scenarioKey
+        if (!key || seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+    }
+
+    let realitySnapshot: ProjectRealitySnapshot = {
+      currentReality: meaning.current_reality,
+      desiredReality: meaning.desired_reality,
+      artifacts: [],
+      verifications: [],
+      epistemic: [],
+      execution: [],
+      blockers: [],
+    }
+
+    if (projectId) {
+      const [projectState, artifactsState, verificationsState, epistemicState, executionState, nodesState] = await Promise.all([
+        admin
+          .from('perception_projects')
+          .select('current_reality, desired_reality')
+          .eq('id', projectId)
+          .eq('user_id', userData.user.id)
+          .maybeSingle(),
+        admin
+          .from('perception_artifacts')
+          .select('title, content, artifact_type')
+          .eq('project_id', projectId)
+          .eq('user_id', userData.user.id)
+          .order('created_at', { ascending: false })
+          .limit(100),
+        admin
+          .from('perception_verification_runs')
+          .select('passed, details')
+          .eq('project_id', projectId)
+          .eq('user_id', userData.user.id)
+          .order('checked_at', { ascending: false })
+          .limit(100),
+        admin
+          .from('perception_epistemic_ledger')
+          .select('statement, state, confidence, route_impact')
+          .eq('project_id', projectId)
+          .eq('user_id', userData.user.id)
+          .order('created_at', { ascending: false })
+          .limit(200),
+        admin
+          .from('perception_execution_ledger')
+          .select('action_key, phase, details')
+          .eq('project_id', projectId)
+          .eq('user_id', userData.user.id)
+          .order('created_at', { ascending: false })
+          .limit(200),
+        admin
+          .from('perception_route_nodes')
+          .select('blocker')
+          .eq('project_id', projectId)
+          .eq('user_id', userData.user.id)
+          .order('created_at', { ascending: false })
+          .limit(200),
+      ])
+
+      realitySnapshot = {
+        currentReality: projectState.data?.current_reality || meaning.current_reality,
+        desiredReality: projectState.data?.desired_reality || meaning.desired_reality,
+        artifacts: (artifactsState.data ?? []).map((artifact) => ({
+          title: artifact.title || '',
+          content: artifact.content,
+          artifactType: artifact.artifact_type,
+        })),
+        verifications: (verificationsState.data ?? []).map((verification) => ({
+          passed: Boolean(verification.passed),
+          details: verification.details as Record<string, unknown> | null,
+        })),
+        epistemic: (epistemicState.data ?? []).map((claim) => ({
+          statement: claim.statement || '',
+          state: claim.state,
+          confidence: Number(claim.confidence ?? 0),
+          routeImpact: claim.route_impact,
+        })) as ProjectRealitySnapshot['epistemic'],
+        execution: (executionState.data ?? []).map((entry) => ({
+          actionKey: entry.action_key || '',
+          phase: entry.phase,
+          details: entry.details as Record<string, unknown> | null,
+        })) as ProjectRealitySnapshot['execution'],
+        blockers: (nodesState.data ?? [])
+          .map((node) => node.blocker)
+          .filter((blocker): blocker is string => typeof blocker === 'string' && blocker.trim().length > 0),
+      }
+    }
+
+    let realityMap = mapProjectReality(plannerMeaning, realitySnapshot)
+    let routePlan = planDynamicRealityRoute(plannerMeaning, realityMap, {
+      availableCapabilities: plannerCapabilities,
+      warmStartScenarios,
+    })
+
+    if (!resumeObjective && projectId && objectiveId && routeId) {
+      const dynamicRouteCall = await admin.rpc('perception_apply_dynamic_route_internal', {
+        p_user_id: userData.user.id,
+        p_project_id: projectId,
+        p_objective_id: objectiveId,
+        p_previous_route_id: routeId,
+        p_plan: routePlan,
+      })
+
+      if (!dynamicRouteCall.error && dynamicRouteCall.data && typeof dynamicRouteCall.data === 'object') {
+        runtimeResult = {
+          ...runtimeResult,
+          ...(dynamicRouteCall.data as Record<string, unknown>),
+        }
+      } else if (
+        dynamicRouteCall.error?.code !== 'PGRST202'
+        && dynamicRouteCall.error?.code !== '42883'
+      ) {
+        console.error('Perception dynamic route persistence failed', {
+          code: dynamicRouteCall.error?.code,
+          message: dynamicRouteCall.error?.message,
+        })
+      }
+    }
+
     const continuationRouteId = typeof runtimeResult.continuation_route_id === 'string'
       ? runtimeResult.continuation_route_id
       : null
-    const activeRouteId = continuationRouteId ?? routeId
+    let activeRouteId = continuationRouteId ?? routeId
+    const localExecutions: Array<Record<string, unknown>> = []
+    let scenarioUtility: Record<string, unknown> = {
+      selected: false,
+      source: 'scenario_utility_learning_v0_10',
+    }
 
-    const actionContractResolutions: Array<Record<string, unknown>> = []
+    if (
+      projectId
+      && objectiveId
+      && activeRouteId
+      && routePlan.warmStartScenarioKey
+    ) {
+      const utilityCall = await admin.rpc(
+        'perception_record_scenario_selection_internal',
+        {
+          p_user_id: userData.user.id,
+          p_project_id: projectId,
+          p_objective_id: objectiveId,
+          p_route_id: activeRouteId,
+          p_selected_scenario_key: routePlan.warmStartScenarioKey,
+        },
+      )
+
+      if (
+        !utilityCall.error
+        && utilityCall.data
+        && typeof utilityCall.data === 'object'
+        && !Array.isArray(utilityCall.data)
+      ) {
+        scenarioUtility = {
+          selected: true,
+          source: 'scenario_utility_learning_v0_10',
+          ...(utilityCall.data as Record<string, unknown>),
+        }
+      } else if (
+        utilityCall.error?.code !== 'PGRST202'
+        && utilityCall.error?.code !== '42883'
+      ) {
+        console.error('Perception scenario utility selection failed', {
+          code: utilityCall.error?.code,
+          message: utilityCall.error?.message,
+          project_id: projectId,
+          route_id: activeRouteId,
+          scenario_key: routePlan.warmStartScenarioKey,
+        })
+        scenarioUtility = {
+          selected: false,
+          source: 'scenario_utility_learning_v0_10',
+          error: 'selection_record_failed',
+        }
+      }
+    }
+
+    if (projectId && objectiveId && activeRouteId) {
+      const readyLocalNodes = routePlan.nodes
+        .filter((node) =>
+          node.status === 'ready'
+          && (node.permissionLevel === 'P0' || node.permissionLevel === 'P1')
+          && node.capability === 'generate'
+        )
+        .slice(0, 4)
+
+      if (readyLocalNodes.length > 0) {
+        const { data: persistedLocalNodes, error: persistedLocalNodesError } = await admin
+          .from('perception_route_nodes')
+          .select('id, label, outcome, capability, permission_level, status')
+          .eq('project_id', projectId)
+          .eq('route_id', activeRouteId)
+          .in('capability', ['generate', 'verify'])
+          .order('sort_order', { ascending: true })
+
+        if (persistedLocalNodesError) {
+          console.error('Perception local execution route-node lookup failed', {
+            code: persistedLocalNodesError.code,
+            message: persistedLocalNodesError.message,
+          })
+        } else {
+          for (const plannedNode of readyLocalNodes) {
+            const persistedNode = (persistedLocalNodes ?? []).find((candidate) =>
+              candidate.capability === plannedNode.capability
+              && candidate.label === plannedNode.label
+              && candidate.outcome === plannedNode.outcome
+            ) ?? (persistedLocalNodes ?? []).find((candidate) =>
+              candidate.capability === plannedNode.capability
+              && candidate.label === plannedNode.label
+            )
+
+            if (!persistedNode?.id) {
+              localExecutions.push({
+                node_key: plannedNode.key,
+                ok: false,
+                phase: 'blocked',
+                failures: ['Persisted local route node could not be resolved.'],
+              })
+              continue
+            }
+
+            const leaseToken = crypto.randomUUID()
+            const workerInput = {
+              objective_id: objectiveId,
+              objective: statement,
+              desired_reality: meaning.desired_reality,
+              current_reality: realityMap.currentReality,
+              planned_outcome: plannedNode.outcome,
+              route_id: activeRouteId,
+            }
+            const claimCall = await admin.rpc('perception_claim_local_node_internal', {
+              p_user_id: userData.user.id,
+              p_project_id: projectId,
+              p_objective_id: objectiveId,
+              p_route_id: activeRouteId,
+              p_route_node_id: persistedNode.id,
+              p_worker_key: 'local_generate_worker_v1',
+              p_input: workerInput,
+              p_lease_token: leaseToken,
+              p_lease_seconds: 600,
+              p_max_attempts: 3,
+            })
+
+            if (claimCall.error || !claimCall.data || typeof claimCall.data !== 'object') {
+              localExecutions.push({
+                node_key: plannedNode.key,
+                ok: false,
+                phase: 'blocked',
+                failures: [claimCall.error?.message || 'Local worker claim failed.'],
+              })
+              continue
+            }
+
+            const claim = claimCall.data as Record<string, unknown>
+            if (claim.claimed !== true) {
+              const reason = typeof claim.reason === 'string' ? claim.reason : 'not_claimed'
+              localExecutions.push({
+                node_key: plannedNode.key,
+                worker_run_id: typeof claim.worker_run_id === 'string' ? claim.worker_run_id : undefined,
+                artifact_id: typeof claim.output_artifact_id === 'string' ? claim.output_artifact_id : undefined,
+                ok: reason === 'already_succeeded' || reason === 'already_completed',
+                phase: reason,
+                retry_after: claim.retry_after,
+                lease_expires_at: claim.lease_expires_at,
+              })
+              continue
+            }
+
+            const workerId = typeof claim.worker_run_id === 'string' ? claim.worker_run_id : ''
+            if (!workerId) {
+              localExecutions.push({
+                node_key: plannedNode.key,
+                ok: false,
+                phase: 'blocked',
+                failures: ['Local worker claim returned no worker id.'],
+              })
+              continue
+            }
+            const worker = { id: workerId }
+
+            const localDecision = governTask({
+              statement: plannedNode.outcome,
+              capability: 'generate',
+              risk: plannedNode.risk,
+            })
+            const localModelRoute = routeModelTargets(localDecision, configuredTargets, {
+              risk: plannedNode.risk,
+              mechanicallyVerifiable: true,
+              costControlEnabled,
+              budgetPressure,
+            })
+
+            const materialized = await materializeLocalArtifact({
+              objective: statement,
+              desiredReality: meaning.desired_reality,
+              currentReality: realityMap.currentReality,
+              outcome: plannedNode.outcome,
+              constraints: meaning.constraints,
+              successCriteria: [
+                ...meaning.success_criteria,
+                ...plannedNode.completionTests.map((test) => test.description),
+              ],
+              verifiedEvidence: realityMap.verifiedEvidence.slice(0, 20),
+              candidates: localModelRoute.candidates,
+              maxOutputTokens: localDecision.maxOutputTokens,
+            })
+            const verification = verifyLocalArtifact(materialized, plannedNode.outcome)
+
+            for (const attempt of materialized.attempts) {
+              if (!attempt.usage) continue
+              const matchedTarget = configuredTargets.find(
+                (target) => target.provider === attempt.provider && target.model === attempt.model,
+              )
+              const estimatedCostUsd = estimateCost(attempt.usage, matchedTarget?.price)
+              const deepestPrice = configuredTargets
+                .filter((target) => target.lane === 'deep' && target.price)
+                .map((target) => target.price)[0]
+              const baselineCostUsd = estimateCost(attempt.usage, deepestPrice) || estimatedCostUsd
+
+              const usageCall = await admin.rpc('perception_record_token_usage_internal', {
+                p_user_id: userData.user.id,
+                p_project_id: projectId,
+                p_objective_id: objectiveId,
+                p_worker_run_id: worker.id,
+                p_capability: 'generate',
+                p_task_kind: 'local_generate_worker',
+                p_provider: attempt.provider,
+                p_model: attempt.model,
+                p_budget_tier: localDecision.tier,
+                p_input_tokens: attempt.usage.inputTokens,
+                p_cached_input_tokens: attempt.usage.cachedInputTokens,
+                p_output_tokens: attempt.usage.outputTokens,
+                p_reasoning_tokens: attempt.usage.reasoningTokens,
+                p_max_output_tokens: localDecision.maxOutputTokens,
+                p_estimated_cost_usd: estimatedCostUsd,
+                p_baseline_cost_usd: baselineCostUsd,
+                p_request_id: null,
+                p_metadata: {
+                  ok: attempt.ok,
+                  reason: attempt.reason ?? null,
+                  protocol: attempt.protocol,
+                  routing_strategy: 'verified-cheapest-first',
+                  runtime: 'local_generate_worker_v1',
+                },
+              })
+
+              if (usageCall.error) {
+                console.error('Perception local worker token telemetry failed', {
+                  code: usageCall.error.code,
+                  message: usageCall.error.message,
+                })
+              }
+            }
+
+            if (!materialized.ok || !verification.passed) {
+              const failures = Array.from(new Set([
+                ...materialized.failures,
+                ...verification.failures,
+              ]))
+
+              await admin
+                .from('perception_verification_runs')
+                .insert({
+                  user_id: userData.user.id,
+                  project_id: projectId,
+                  route_node_id: persistedNode.id,
+                  worker_run_id: worker.id,
+                  passed: false,
+                  evidence: [...materialized.evidence, ...verification.evidence],
+                  details: {
+                    kind: 'local_artifact_verification_v1',
+                    node_key: plannedNode.key,
+                    failures,
+                  },
+                })
+
+              await failLocalWorker(
+                worker.id,
+                leaseToken,
+                'verification_failed',
+                failures.join(' '),
+                30,
+              )
+
+              localExecutions.push({
+                node_key: plannedNode.key,
+                worker_run_id: worker.id,
+                ok: false,
+                phase: 'failed',
+                failures,
+              })
+              continue
+            }
+
+            const { data: artifact, error: artifactError } = await admin
+              .from('perception_artifacts')
+              .insert({
+                user_id: userData.user.id,
+                project_id: projectId,
+                objective_id: objectiveId,
+                route_node_id: persistedNode.id,
+                artifact_type: 'dynamic_local_artifact',
+                title: plannedNode.outcome.slice(0, 500),
+                content: materialized.content,
+                metadata: {
+                  worker_key: 'local_generate_worker_v1',
+                  generated_title: materialized.title,
+                  planned_outcome: plannedNode.outcome,
+                  confidence: materialized.confidence,
+                  completion_evidence: materialized.completionEvidence,
+                  model_attempts: materialized.attempts,
+                },
+              })
+              .select('id')
+              .single()
+
+            if (artifactError || !artifact?.id) {
+              await failLocalWorker(
+                worker.id,
+                leaseToken,
+                'artifact_persistence_failed',
+                artifactError?.message || 'Artifact persistence failed.',
+                30,
+              )
+              localExecutions.push({
+                node_key: plannedNode.key,
+                worker_run_id: worker.id,
+                ok: false,
+                phase: 'failed',
+                failures: [artifactError?.message || 'Artifact persistence failed.'],
+              })
+              continue
+            }
+
+            const verificationEvidence = [
+              ...materialized.evidence,
+              ...verification.evidence,
+              {
+                kind: 'planned_completion_tests',
+                tests: plannedNode.completionTests,
+              },
+            ]
+
+            const { data: verificationRun, error: verificationError } = await admin
+              .from('perception_verification_runs')
+              .insert({
+                user_id: userData.user.id,
+                project_id: projectId,
+                route_node_id: persistedNode.id,
+                worker_run_id: worker.id,
+                passed: true,
+                evidence: verificationEvidence,
+                details: {
+                  kind: 'local_artifact_verification_v1',
+                  node_key: plannedNode.key,
+                  planned_outcome: plannedNode.outcome,
+                  confidence: materialized.confidence,
+                },
+              })
+              .select('id')
+              .single()
+
+            if (verificationError || !verificationRun?.id) {
+              await failLocalWorker(
+                worker.id,
+                leaseToken,
+                'verification_persistence_failed',
+                verificationError?.message || 'Verification persistence failed.',
+                30,
+              )
+              localExecutions.push({
+                node_key: plannedNode.key,
+                worker_run_id: worker.id,
+                artifact_id: artifact.id,
+                ok: false,
+                phase: 'failed',
+                failures: [verificationError?.message || 'Verification persistence failed.'],
+              })
+              continue
+            }
+
+            const verifiedSummary = `Verified bounded artifact created for: ${plannedNode.outcome}`
+            const applyCall = await admin.rpc('perception_apply_verified_local_effect_leased_internal', {
+              p_user_id: userData.user.id,
+              p_project_id: projectId,
+              p_objective_id: objectiveId,
+              p_route_node_id: persistedNode.id,
+              p_worker_run_id: worker.id,
+              p_lease_token: leaseToken,
+              p_artifact_id: artifact.id,
+              p_summary: verifiedSummary,
+              p_evidence: verificationEvidence,
+            })
+
+            if (applyCall.error) {
+              await failLocalWorker(
+                worker.id,
+                leaseToken,
+                'verified_effect_apply_failed',
+                applyCall.error.message,
+                30,
+              )
+              localExecutions.push({
+                node_key: plannedNode.key,
+                worker_run_id: worker.id,
+                artifact_id: artifact.id,
+                verification_id: verificationRun.id,
+                ok: false,
+                phase: 'failed',
+                failures: [applyCall.error.message],
+              })
+              continue
+            }
+
+            const companionVerifyNodes = routePlan.nodes.filter((candidate) =>
+              candidate.capability === 'verify'
+              && candidate.dependencies.includes(plannedNode.key)
+            )
+
+            for (const verifyNode of companionVerifyNodes) {
+              const persistedVerifyNode = (persistedLocalNodes ?? []).find((candidate) =>
+                candidate.capability === 'verify'
+                && candidate.label === verifyNode.label
+                && candidate.outcome === verifyNode.outcome
+              ) ?? (persistedLocalNodes ?? []).find((candidate) =>
+                candidate.capability === 'verify'
+                && candidate.label === verifyNode.label
+              )
+
+              if (persistedVerifyNode?.id) {
+                await admin
+                  .from('perception_route_nodes')
+                  .update({ status: 'completed', blocker: null, updated_at: new Date().toISOString() })
+                  .eq('id', persistedVerifyNode.id)
+
+                await admin
+                  .from('perception_model_events')
+                  .insert({
+                    user_id: userData.user.id,
+                    project_id: projectId,
+                    event_type: 'route_node.completed',
+                    payload: {
+                      objective_id: objectiveId,
+                      route_node_id: persistedVerifyNode.id,
+                      verified_route_node_id: persistedNode.id,
+                      verification_id: verificationRun.id,
+                      source: 'companion_verification_v0_4',
+                    },
+                  })
+              }
+            }
+
+            localExecutions.push({
+              node_key: plannedNode.key,
+              worker_run_id: worker.id,
+              artifact_id: artifact.id,
+              verification_id: verificationRun.id,
+              ok: true,
+              phase: 'verified',
+              confidence: materialized.confidence,
+            })
+          }
+        }
+      }
+
+      if (localExecutions.length > 0) {
+        const [
+          refreshedProject,
+          refreshedArtifacts,
+          refreshedVerifications,
+          refreshedEpistemic,
+          refreshedExecution,
+          refreshedNodes,
+        ] = await Promise.all([
+          admin
+            .from('perception_projects')
+            .select('current_reality, desired_reality')
+            .eq('id', projectId)
+            .eq('user_id', userData.user.id)
+            .maybeSingle(),
+          admin
+            .from('perception_artifacts')
+            .select('title, content, artifact_type')
+            .eq('project_id', projectId)
+            .eq('user_id', userData.user.id)
+            .order('created_at', { ascending: false })
+            .limit(100),
+          admin
+            .from('perception_verification_runs')
+            .select('passed, details')
+            .eq('project_id', projectId)
+            .eq('user_id', userData.user.id)
+            .order('checked_at', { ascending: false })
+            .limit(100),
+          admin
+            .from('perception_epistemic_ledger')
+            .select('statement, state, confidence, route_impact')
+            .eq('project_id', projectId)
+            .eq('user_id', userData.user.id)
+            .order('created_at', { ascending: false })
+            .limit(200),
+          admin
+            .from('perception_execution_ledger')
+            .select('action_key, phase, details')
+            .eq('project_id', projectId)
+            .eq('user_id', userData.user.id)
+            .order('created_at', { ascending: false })
+            .limit(200),
+          admin
+            .from('perception_route_nodes')
+            .select('blocker')
+            .eq('project_id', projectId)
+            .eq('route_id', activeRouteId)
+            .eq('user_id', userData.user.id)
+            .order('created_at', { ascending: false })
+            .limit(200),
+        ])
+
+        realitySnapshot = {
+          currentReality: refreshedProject.data?.current_reality || realitySnapshot.currentReality,
+          desiredReality: refreshedProject.data?.desired_reality || realitySnapshot.desiredReality,
+          artifacts: (refreshedArtifacts.data ?? []).map((artifact) => ({
+            title: artifact.title || '',
+            content: artifact.content,
+            artifactType: artifact.artifact_type,
+          })),
+          verifications: (refreshedVerifications.data ?? []).map((verificationRow) => ({
+            passed: Boolean(verificationRow.passed),
+            details: verificationRow.details as Record<string, unknown> | null,
+          })),
+          epistemic: (refreshedEpistemic.data ?? []).map((claim) => ({
+            statement: claim.statement || '',
+            state: claim.state,
+            confidence: Number(claim.confidence ?? 0),
+            routeImpact: claim.route_impact,
+          })) as ProjectRealitySnapshot['epistemic'],
+          execution: (refreshedExecution.data ?? []).map((entry) => ({
+            actionKey: entry.action_key || '',
+            phase: entry.phase,
+            details: entry.details as Record<string, unknown> | null,
+          })) as ProjectRealitySnapshot['execution'],
+          blockers: (refreshedNodes.data ?? [])
+            .map((node) => node.blocker)
+            .filter((blocker): blocker is string => typeof blocker === 'string' && blocker.trim().length > 0),
+        }
+
+        realityMap = mapProjectReality(plannerMeaning, realitySnapshot)
+        const adaptedRoutePlan = planDynamicRealityRoute(plannerMeaning, realityMap, {
+          availableCapabilities: plannerCapabilities,
+          warmStartScenarios,
+        })
+
+        const adaptationCall = await admin.rpc('perception_apply_dynamic_route_internal', {
+          p_user_id: userData.user.id,
+          p_project_id: projectId,
+          p_objective_id: objectiveId,
+          p_previous_route_id: activeRouteId,
+          p_plan: adaptedRoutePlan,
+        })
+
+        if (!adaptationCall.error && adaptationCall.data && typeof adaptationCall.data === 'object') {
+          runtimeResult = {
+            ...runtimeResult,
+            ...(adaptationCall.data as Record<string, unknown>),
+          }
+          const adaptedRouteId = (adaptationCall.data as Record<string, unknown>).continuation_route_id
+          if (typeof adaptedRouteId === 'string') activeRouteId = adaptedRouteId
+          routePlan = adaptedRoutePlan
+        } else if (
+          adaptationCall.error?.code !== 'PGRST202'
+          && adaptationCall.error?.code !== '42883'
+        ) {
+          console.error('Perception adaptation route persistence failed', {
+            code: adaptationCall.error?.code,
+            message: adaptationCall.error?.message,
+          })
+        }
+      }
+    }
+
+    const capabilityRouting = routePlannedCapabilities(routePlan.nodes, {
+      githubOperatorAttached: operatorCapabilities.includes('code'),
+    })
+
+    const hasGitHubCodeRoute = capabilityRouting.some((decision) => decision.adapter === 'github-operator')
+    const codePlanDecision = hasGitHubCodeRoute
+      ? governTask({ statement: meaning.desired_reality, capability: 'code', risk: 'medium' })
+      : null
+    const codePlanModelRoute = codePlanDecision
+      ? routeModelTargets(codePlanDecision, configuredTargets, {
+          risk: 'medium',
+          mechanicallyVerifiable: true,
+          costControlEnabled,
+          budgetPressure,
+        })
+      : null
+
+    let boundGitHubRepository: string | null = null
+    if (projectId && capabilityRouting.some((decision) => decision.adapter === 'github-operator')) {
+      const { data: bindings, error: bindingError } = await admin
+        .from('perception_project_source_bindings')
+        .select('source_id, relationship')
+        .eq('user_id', userData.user.id)
+        .eq('project_id', projectId)
+        .eq('active', true)
+
+      if (bindingError) {
+        console.error('Perception GitHub source binding lookup failed', {
+          code: bindingError.code,
+          message: bindingError.message,
+        })
+      } else {
+        const prioritizedBindings = [...(bindings ?? [])].sort((left, right) =>
+          Number(right.relationship === 'primary') - Number(left.relationship === 'primary')
+        )
+        const sourceIds = prioritizedBindings
+          .map((binding) => binding.source_id)
+          .filter((sourceId): sourceId is string => typeof sourceId === 'string')
+
+        if (sourceIds.length > 0) {
+          const { data: sources, error: sourceError } = await admin
+            .from('perception_sources')
+            .select('id, locator')
+            .in('id', sourceIds)
+            .eq('provider', 'github')
+            .eq('source_type', 'github_repo')
+            .eq('enabled', true)
+
+          if (sourceError) {
+            console.error('Perception GitHub source lookup failed', {
+              code: sourceError.code,
+              message: sourceError.message,
+            })
+          } else {
+            const sourceById = new Map((sources ?? []).map((source) => [source.id, source]))
+            for (const binding of prioritizedBindings) {
+              const source = sourceById.get(binding.source_id)
+              const repository = repositoryFromGitHubLocator(source?.locator)
+              if (repository) {
+                boundGitHubRepository = repository
+                break
+              }
+            }
+          }
+        }
+      }
+    }
+
+    let persistedCodeRouteNodes: Array<{
+      id: string
+      label: string
+      outcome: string
+      permission_level: string
+    }> = []
+
+    if (projectId && activeRouteId && hasGitHubCodeRoute) {
+      const { data: codeNodes, error: codeNodesError } = await admin
+        .from('perception_route_nodes')
+        .select('id, label, outcome, permission_level')
+        .eq('project_id', projectId)
+        .eq('route_id', activeRouteId)
+        .eq('capability', 'code')
+
+      if (codeNodesError) {
+        console.error('Perception code-plan route-node lookup failed', {
+          code: codeNodesError.code,
+          message: codeNodesError.message,
+        })
+      } else {
+        persistedCodeRouteNodes = (codeNodes ?? []) as typeof persistedCodeRouteNodes
+      }
+    }
+
+    const actionContracts: Array<ReturnType<typeof buildGitHubActionContract>> = []
+    const codePlanMaterializations: Array<Record<string, unknown>> = []
     const usageEvidence: Array<Record<string, unknown>> = []
 
     if (projectId) {
@@ -398,108 +1577,314 @@ Deno.serve(async (req: Request) => {
       )
 
       for (const decision of capabilityRouting.filter((candidate) => candidate.executionMode === 'external')) {
-        const node = routePlan.nodes.find((candidate) => candidate.key === decision.nodeKey)
-        const continuationIndex = continuationPlanNodes.findIndex((candidate) => candidate.key === decision.nodeKey)
-        const expectedSortOrder = continuationIndex >= 0 ? continuationIndex + 1 : null
-        const routeNodeId = expectedSortOrder === null
-          ? null
-          : (persistedRouteNodes.data ?? []).find((candidate) => candidate.sort_order === expectedSortOrder)?.id ?? null
-        let resolution = node
-          ? resolveActionContract({
-              decision,
-              node,
-              projectId,
-              objectiveId,
-              routeId: activeRouteId,
-              sources: actionSources,
-              files: executionFiles,
-              permissionGranted: false,
-            })
-          : null
+        const routeNode = routePlan.nodes.find((node) => node.key === decision.nodeKey)
+        let actionContract: ReturnType<typeof buildGitHubActionContract> | null = null
 
-        if (resolution?.contract) {
-          const { data: grants, error: grantError } = await admin
-            .from('perception_permission_grants')
-            .select('permission_level, expires_at')
-            .eq('user_id', userData.user.id)
-            .eq('project_id', projectId)
-            .eq('capability', 'code')
-            .eq('target', resolution.contract.permission.target)
-            .is('revoked_at', null)
+        if (decision.adapter === 'github-operator' && routeNode) {
+          const draftContract = buildGitHubActionContract({
+            decision,
+            node: routeNode,
+            projectId,
+            objectiveId,
+            routeId: activeRouteId,
+            repository: boundGitHubRepository,
+          })
 
-          if (grantError) {
-            console.error('Perception action-contract permission lookup failed', {
-              code: grantError.code,
-              message: grantError.message,
-            })
-          } else {
-            const now = Date.now()
-            const permissionGranted = (grants ?? []).some((grant) => {
-              const expiry = grant.expires_at ? new Date(grant.expires_at).getTime() : null
-              return ['P2', 'P3'].includes(String(grant.permission_level))
-                && (expiry === null || expiry > now)
-            })
+          let filesOrPatch: Parameters<typeof buildGitHubActionContract>[0]['filesOrPatch'] = null
+          let materializedTests: string[] = []
+          let materializerResult: GitHubCodePlanResult | null = null
+          const persistedRouteNode = persistedCodeRouteNodes.find((candidate) =>
+            candidate.label === routeNode.label && candidate.outcome === routeNode.outcome
+          ) ?? persistedCodeRouteNodes.find((candidate) => candidate.label === routeNode.label)
+            ?? persistedCodeRouteNodes[0]
+            ?? null
 
-            if (permissionGranted && node) {
-              resolution = resolveActionContract({
-                decision,
-                node,
-                projectId,
-                objectiveId,
-                routeId: activeRouteId,
-                sources: actionSources,
-                files: executionFiles,
-                permissionGranted: true,
+          const prerequisiteFailures = [
+            ...(!boundGitHubRepository ? ['No bound GitHub repository is available in Project World.'] : []),
+            ...(!persistedRouteNode ? ['The persisted code route node could not be resolved.'] : []),
+            ...(!githubReadToken ? ['The server-side GitHub read credential is unavailable.'] : []),
+            ...(!codePlanDecision || !codePlanModelRoute?.candidates.length
+              ? ['No code-planning model route is available.']
+              : []),
+          ]
+
+          if (prerequisiteFailures.length === 0 && boundGitHubRepository && persistedRouteNode && codePlanDecision && codePlanModelRoute) {
+            const startedAt = new Date().toISOString()
+            const { data: worker, error: workerError } = await admin
+              .from('perception_worker_runs')
+              .insert({
+                user_id: userData.user.id,
+                project_id: projectId,
+                route_node_id: persistedRouteNode.id,
+                worker_key: 'github_code_plan_materializer_v1',
+                capability: 'code',
+                permission_level: 'P1',
+                status: 'running',
+                input: {
+                  repository: boundGitHubRepository,
+                  base_branch: draftContract.base_branch,
+                  desired_changes: routeNode.outcome,
+                  completion_tests: routeNode.completionTests,
+                },
+                evidence: [],
+                started_at: startedAt,
               })
+              .select('id')
+              .single()
+
+            if (workerError || !worker?.id) {
+              prerequisiteFailures.push(
+                `Could not persist the P1 code-plan worker: ${workerError?.message || 'unknown error'}`,
+              )
+            } else {
+              materializerResult = await materializeGitHubCodePlan({
+                repository: boundGitHubRepository,
+                baseBranch: draftContract.base_branch,
+                desiredChanges: routeNode.outcome,
+                completionTests: routeNode.completionTests.map((test) => test.description),
+                githubToken: githubReadToken,
+                candidates: codePlanModelRoute.candidates,
+                maxOutputTokens: codePlanDecision.maxOutputTokens,
+              })
+
+              codePlanMaterializations.push({
+                node_key: decision.nodeKey,
+                worker_run_id: worker.id,
+                ...materializerResult,
+              })
+
+              const deepestPrice = configuredTargets
+                .filter((target) => target.lane === 'deep' && target.price)
+                .map((target) => target.price)[0]
+
+              for (const attempt of materializerResult.attempts) {
+                if (!attempt.usage) continue
+                const matchedTarget = configuredTargets.find(
+                  (target) => target.provider === attempt.provider && target.model === attempt.model,
+                )
+                const estimatedCostUsd = estimateCost(attempt.usage, matchedTarget?.price)
+                const baselineCostUsd = estimateCost(attempt.usage, deepestPrice) || estimatedCostUsd
+
+                const usageCall = await admin.rpc('perception_record_token_usage_internal', {
+                  p_user_id: userData.user.id,
+                  p_project_id: projectId,
+                  p_objective_id: objectiveId,
+                  p_worker_run_id: worker.id,
+                  p_capability: 'code',
+                  p_task_kind: `code_plan_${attempt.stage}`,
+                  p_provider: attempt.provider,
+                  p_model: attempt.model,
+                  p_budget_tier: codePlanDecision.tier,
+                  p_input_tokens: attempt.usage.inputTokens,
+                  p_cached_input_tokens: attempt.usage.cachedInputTokens,
+                  p_output_tokens: attempt.usage.outputTokens,
+                  p_reasoning_tokens: attempt.usage.reasoningTokens,
+                  p_max_output_tokens: codePlanDecision.maxOutputTokens,
+                  p_estimated_cost_usd: estimatedCostUsd,
+                  p_baseline_cost_usd: baselineCostUsd,
+                  p_request_id: null,
+                  p_metadata: {
+                    ok: attempt.ok,
+                    reason: attempt.reason ?? null,
+                    stage: attempt.stage,
+                    protocol: attempt.protocol,
+                    routing_strategy: 'verified-cheapest-first',
+                  },
+                })
+
+                if (usageCall.error) {
+                  console.error('Perception code-plan token telemetry failed', {
+                    code: usageCall.error.code,
+                    message: usageCall.error.message,
+                  })
+                }
+              }
+
+              if (materializerResult.ok) {
+                const artifactPayload = {
+                  version: 'github.code-plan.v1',
+                  repository: materializerResult.repository,
+                  base_branch: materializerResult.base_branch,
+                  base_sha: materializerResult.base_sha,
+                  tree_sha: materializerResult.tree_sha,
+                  read_paths: materializerResult.read_paths,
+                  write_paths: materializerResult.write_paths,
+                  files: materializerResult.files,
+                  tests: materializerResult.tests,
+                  rationale: materializerResult.rationale,
+                  confidence: materializerResult.confidence,
+                }
+
+                const { data: artifact, error: artifactError } = await admin
+                  .from('perception_artifacts')
+                  .insert({
+                    user_id: userData.user.id,
+                    project_id: projectId,
+                    objective_id: objectiveId,
+                    route_node_id: persistedRouteNode.id,
+                    artifact_type: 'github_code_plan',
+                    title: `Code plan: ${routeNode.label}`,
+                    content: JSON.stringify(artifactPayload, null, 2),
+                    metadata: {
+                      worker_key: 'github_code_plan_materializer_v1',
+                      repository: materializerResult.repository,
+                      base_sha: materializerResult.base_sha,
+                      tree_sha: materializerResult.tree_sha,
+                      read_paths: materializerResult.read_paths,
+                      write_paths: materializerResult.write_paths,
+                      confidence: materializerResult.confidence,
+                    },
+                  })
+                  .select('id')
+                  .single()
+
+                if (!artifactError && artifact?.id) {
+                  const verificationEvidence = [
+                    ...materializerResult.evidence,
+                    {
+                      kind: 'scope_verification',
+                      expected_write_paths: materializerResult.write_paths,
+                      generated_write_paths: materializerResult.files.map((file) => file.path),
+                    },
+                  ]
+
+                  const { error: verificationError } = await admin
+                    .from('perception_verification_runs')
+                    .insert({
+                      user_id: userData.user.id,
+                      project_id: projectId,
+                      route_node_id: persistedRouteNode.id,
+                      worker_run_id: worker.id,
+                      passed: true,
+                      evidence: verificationEvidence,
+                      details: {
+                        kind: 'github_code_plan_materialization',
+                        repository: materializerResult.repository,
+                        base_sha: materializerResult.base_sha,
+                        file_count: materializerResult.files.length,
+                        tests: materializerResult.tests,
+                      },
+                    })
+
+                  if (!verificationError) {
+                    await admin
+                      .from('perception_worker_runs')
+                      .update({
+                        status: 'succeeded',
+                        output_artifact_id: artifact.id,
+                        evidence: verificationEvidence,
+                        finished_at: new Date().toISOString(),
+                      })
+                      .eq('id', worker.id)
+
+                    filesOrPatch = {
+                      kind: 'files',
+                      files: materializerResult.files.map((file) => ({
+                        path: file.path,
+                        content: file.content,
+                      })),
+                    }
+                    materializedTests = materializerResult.tests
+                  } else {
+                    prerequisiteFailures.push(
+                      `Code-plan verification could not be persisted: ${verificationError.message}`,
+                    )
+                  }
+                } else {
+                  prerequisiteFailures.push(
+                    `Code-plan artifact could not be persisted: ${artifactError?.message || 'unknown error'}`,
+                  )
+                }
+              } else {
+                const verificationEvidence = [
+                  ...materializerResult.evidence,
+                  ...materializerResult.failures.map((failure) => ({ kind: 'failure', failure })),
+                ]
+                await admin
+                  .from('perception_verification_runs')
+                  .insert({
+                    user_id: userData.user.id,
+                    project_id: projectId,
+                    route_node_id: persistedRouteNode.id,
+                    worker_run_id: worker.id,
+                    passed: false,
+                    evidence: verificationEvidence,
+                    details: {
+                      kind: 'github_code_plan_materialization',
+                      failures: materializerResult.failures,
+                    },
+                  })
+                prerequisiteFailures.push(...materializerResult.failures)
+              }
+
+              if (!filesOrPatch) {
+                await admin
+                  .from('perception_worker_runs')
+                  .update({
+                    status: 'failed',
+                    evidence: [
+                      ...(materializerResult?.evidence ?? []),
+                      ...prerequisiteFailures.map((failure) => ({ kind: 'failure', failure })),
+                    ],
+                    finished_at: new Date().toISOString(),
+                  })
+                  .eq('id', worker.id)
+              }
             }
           }
-        }
 
-        if (resolution) {
-          actionContractResolutions.push({
-            node_key: decision.nodeKey,
-            adapter: resolution.adapter,
-            status: resolution.status,
-            contract: resolution.contract,
-            missing_fields: resolution.missingFields,
-            blockers: resolution.blockers,
-            idempotency_key: resolution.idempotencyKey,
-            completion_tests: resolution.completionTests,
-            provenance: resolution.provenance,
-          })
-        }
-
-        const routingStatus = resolution?.status ?? decision.status
-        const routingBlockers = resolution?.blockers ?? decision.blockers
-        const target = resolution?.contract?.permission.target ?? null
-
-        if (routeNodeId && resolution) {
-          const routeNodeStatus = resolution.status === 'awaiting_permission'
-            ? 'awaiting_approval'
-            : resolution.status === 'ready'
-              ? 'ready'
-              : 'blocked'
-          const routeNodeBlocker = ['ready', 'awaiting_permission'].includes(resolution.status)
-            ? null
-            : resolution.blockers.join(' ').slice(0, 4000) || 'Action contract is not executable yet.'
-
-          const { error: routeNodeUpdateError } = await admin
-            .from('perception_route_nodes')
-            .update({ status: routeNodeStatus, blocker: routeNodeBlocker })
-            .eq('id', routeNodeId)
-            .eq('project_id', projectId)
-            .eq('route_id', activeRouteId)
-
-          if (routeNodeUpdateError) {
-            console.error('Perception action-contract route state update failed', {
-              code: routeNodeUpdateError.code,
-              message: routeNodeUpdateError.message,
+          if (prerequisiteFailures.length > 0 && !materializerResult) {
+            codePlanMaterializations.push({
               node_key: decision.nodeKey,
+              ok: false,
+              phase: 'blocked',
+              failures: prerequisiteFailures,
             })
           }
+
+          let permissionGrantId: string | null = null
+          if (draftContract.target && decision.permissionRequired) {
+            const { data: grants, error: grantError } = await admin
+              .from('perception_permission_grants')
+              .select('id, permission_level, expires_at')
+              .eq('user_id', userData.user.id)
+              .eq('project_id', projectId)
+              .eq('capability', 'code')
+              .eq('target', draftContract.target)
+              .is('revoked_at', null)
+
+            if (grantError) {
+              console.error('Perception action-contract permission lookup failed', {
+                code: grantError.code,
+                message: grantError.message,
+              })
+            } else {
+              const rank: Record<string, number> = { P0: 0, P1: 1, P2: 2, P3: 3 }
+              const requestedRank = rank[decision.permissionLevel] ?? Number.POSITIVE_INFINITY
+              const now = Date.now()
+              const grant = (grants ?? []).find((candidate) => {
+                const expiry = candidate.expires_at ? new Date(candidate.expires_at).getTime() : null
+                return (rank[candidate.permission_level] ?? -1) >= requestedRank
+                  && (expiry === null || expiry > now)
+              })
+              permissionGrantId = grant?.id ?? null
+            }
+          }
+
+          actionContract = buildGitHubActionContract({
+            decision,
+            node: routeNode,
+            projectId,
+            objectiveId,
+            routeId: activeRouteId,
+            repository: boundGitHubRepository,
+            baseSha: materializerResult?.base_sha ?? null,
+            filesOrPatch,
+            tests: materializedTests,
+            permissionGrantId,
+          })
+          actionContracts.push(actionContract)
         }
-        const actionKey = resolution?.idempotencyKey
-          ?? `capability_route:${objectiveId ?? crypto.randomUUID()}:${decision.nodeKey}`
 
         const { error: intentError } = await admin.from('perception_execution_ledger').insert({
           user_id: userData.user.id,
@@ -508,22 +1893,20 @@ Deno.serve(async (req: Request) => {
           route_id: activeRouteId,
           route_node_id: routeNodeId,
           worker_run_id: null,
-          action_key: actionKey,
-          phase: routingStatus === 'blocked' ? 'blocked' : 'intended',
+          action_key: actionContract?.action_key
+            ?? `capability_route:${objectiveId ?? crypto.randomUUID()}:${decision.nodeKey}`,
+          phase: decision.status === 'blocked' ? 'blocked' : 'intended',
           permission_level: decision.permissionLevel,
           capability: decision.capability,
-          target,
+          target: actionContract?.target ?? null,
           details: {
             adapter: decision.adapter,
             routing_status: routingStatus,
             execution_mode: decision.executionMode,
             permission_required: decision.permissionRequired,
             required_input_fields: decision.requiredInputFields,
-            blockers: routingBlockers,
-            action_contract: resolution?.contract ?? null,
-            action_contract_missing_fields: resolution?.missingFields ?? [],
-            action_contract_provenance: resolution?.provenance ?? null,
-            completion_tests: resolution?.completionTests ?? [],
+            blockers: decision.blockers,
+            action_contract: actionContract,
           },
           evidence: [],
         })
@@ -652,12 +2035,91 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    let scenarioForge: Record<string, unknown> = {
+      refreshed: false,
+      source: 'scenario_forge_v0_6',
+    }
+
+    if (projectId) {
+      const forgeCall = await admin.rpc('perception_refresh_scenario_forge_internal', {
+        p_user_id: userData.user.id,
+        p_project_id: projectId,
+      })
+
+      if (
+        !forgeCall.error
+        && forgeCall.data
+        && typeof forgeCall.data === 'object'
+        && !Array.isArray(forgeCall.data)
+      ) {
+        scenarioForge = {
+          refreshed: true,
+          ...(forgeCall.data as Record<string, unknown>),
+          source: 'scenario_forge_v0_6',
+        }
+      } else if (
+        forgeCall.error?.code !== 'PGRST202'
+        && forgeCall.error?.code !== '42883'
+      ) {
+        console.error('Perception Scenario Forge refresh failed', {
+          code: forgeCall.error?.code,
+          message: forgeCall.error?.message,
+          project_id: projectId,
+        })
+        scenarioForge = {
+          refreshed: false,
+          source: 'scenario_forge_v0_6',
+          error: 'refresh_failed',
+        }
+      }
+    }
+
     return json({
       ...runtimeResult,
       meaning,
+      reality_map: realityMap,
       route_plan: routePlan,
       capability_routing: capabilityRouting,
-      action_contracts: actionContractResolutions,
+      action_contracts: actionContracts,
+      local_executions: localExecutions,
+      adaptation: {
+        remapped_after_local_execution: localExecutions.length > 0,
+        active_route_id: activeRouteId,
+      },
+      code_plan_materializations: codePlanMaterializations,
+      continuation: {
+        resumed: Boolean(resumeObjective),
+        reused_existing_route: Boolean(resumeObjective && routeId),
+        active_route_id: activeRouteId,
+      },
+      operator_attachment: {
+        requested_target: requestedOperatorTarget?.target ?? null,
+        principal_enabled: operatorPrincipalEnabled,
+        source_enabled: operatorSourceEnabled,
+        source_bound: operatorSourceBound,
+        read_credential_present: Boolean(githubReadToken),
+        code_attached: operatorCapabilities.includes('code'),
+      },
+      warm_start: {
+        loaded: warmStartScenarios.length > 0,
+        selected_scenario_key: routePlan.warmStartScenarioKey ?? null,
+        scenario_count: warmStartScenarios.length,
+        intent_shadow: {
+          received_candidate_count: intentShadowCandidateIds.length,
+          accepted: intentShadowAccepted,
+          reused_scenario_count: intentShadowWarmStarts.length,
+        },
+        scenarios: warmStartScenarios.map((scenario) => ({
+          scenario_key: scenario.scenarioKey,
+          title: scenario.title,
+          confidence: scenario.confidence,
+          match_count: scenario.matchCount,
+          utility_score: scenario.utilityScore ?? 0.5,
+          is_fresh: scenario.isFresh,
+        })),
+        utility: scenarioUtility,
+        forge: scenarioForge,
+      },
       token_control: {
         enabled: costControlEnabled,
         budget_tier: tokenDecision.tier,

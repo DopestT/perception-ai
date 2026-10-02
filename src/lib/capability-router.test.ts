@@ -46,7 +46,7 @@ describe('Capability Router v1', () => {
       'project_id',
       'repository',
       'branch',
-      'files',
+      'files_or_patch',
     ]))
     expect(decision.blockers.join(' ')).toContain('permission grant')
   })

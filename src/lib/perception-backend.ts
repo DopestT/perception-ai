@@ -296,6 +296,46 @@ export type ProjectWorld = {
   }>
 }
 
+export type GitHubActionContract = {
+  version: 'github.change.v1'
+  action_key: string
+  adapter: 'github-operator'
+  project_id: string
+  objective_id: string | null
+  route_id: string | null
+  node_key: string
+  repository: string | null
+  target: string | null
+  base_branch: string
+  base_sha: string | null
+  working_branch: string
+  desired_changes: string
+  files_or_patch:
+    | { kind: 'files'; files: Array<{ path: string; content: string }> }
+    | { kind: 'patch'; patch: string }
+    | null
+  tests: string[]
+  permission: {
+    required: boolean
+    level: 'P0' | 'P1' | 'P2' | 'P3'
+    capability: 'code'
+    target: string | null
+    grant_id: string | null
+    status: 'not_required' | 'required' | 'active'
+  }
+  verification: { requirements: string[] }
+  rollback: {
+    strategy: 'delete_working_branch'
+    production_branch_untouched: true
+  }
+  idempotency: {
+    key: string
+    strategy: 'reuse_or_block_on_existing_branch'
+  }
+  missing_fields: string[]
+  status: 'needs_source' | 'needs_scope' | 'awaiting_permission' | 'ready'
+}
+
 export type ObjectiveRuntimeResult = {
   ok: boolean
   stages?: string[]
@@ -306,6 +346,114 @@ export type ObjectiveRuntimeResult = {
   artifact_id?: string
   verification_id?: string
   stage?: string
+  resumed?: boolean
+  continuation?: {
+    resumed: boolean
+    reused_existing_route: boolean
+    active_route_id: string | null
+  }
+  local_executions?: Array<Record<string, unknown>>
+  action_contracts?: GitHubActionContract[]
+  operator_attachment?: {
+    requested_target: string | null
+    principal_enabled: boolean
+    source_enabled: boolean
+    source_bound: boolean
+    read_credential_present: boolean
+    code_attached: boolean
+  }
+}
+
+export type IntentShadowScenario = {
+  id: string
+  scenario_key: string
+  title: string
+  confidence: number
+  match_count: number
+  expires_at: string
+  must_revalidate: true
+}
+
+export type IntentShadowLearningCandidate = {
+  candidate_id: string
+  scenario_id: string
+  scenario_key: string
+  title: string
+  confidence: number
+  materiality_score: number
+  verification_kind: string
+  match_count: number
+  last_seen_at: string
+  expires_at: string
+  must_revalidate: true
+}
+
+export type IntentShadowCandidate = {
+  project_id: string
+  name: string
+  current_reality: string
+  desired_reality: string
+  updated_at: string
+  project_match_count: number
+  scenario_match_count: number
+  learning_match_count?: number
+  relevance_score: number
+  scenarios: IntentShadowScenario[]
+  learning_candidates?: IntentShadowLearningCandidate[]
+}
+
+export type IntentShadowPreview = {
+  source: 'intent_shadow_v0_8'
+  retrieval_version?: 'anticipatory_learning_v0_12'
+  mode: 'discover' | 'perceive' | 'search' | 'forecast'
+  query_length: number
+  candidate_count: number
+  candidates: IntentShadowCandidate[]
+  ephemeral: true
+  prepared_at?: string
+  valid_for_ms?: number
+}
+
+export type IntentShadowHandoff = {
+  source: 'intent_shadow_v0_8'
+  prepared_at?: string
+  candidate_scenario_ids: string[]
+}
+
+export type ExternalPresearchStatus = {
+  ok: boolean
+  source: 'external_presearch_control_v0_11'
+  enabled: boolean
+  consent_version: number
+  consented_at: string | null
+  provider: 'tavily'
+  provider_configured: boolean
+  ready: boolean
+  external_attempted: false
+  stores_draft_text: false
+}
+
+export type ExternalPresearchPreview = {
+  ok: boolean
+  source: 'external_presearch_control_v0_11'
+  ready: boolean
+  external_attempted: boolean
+  provider?: 'tavily'
+  reason?: string
+  provider_status?: number
+  result_count?: number
+  results?: Array<{
+    title: string
+    url: string
+    snippet: string
+    score: number
+    published_at: string | null
+  }>
+  ephemeral?: true
+  prepared_at?: string
+  valid_for_ms?: number
+  must_revalidate?: true
+  stores_draft_text: false
 }
 
 export type ProjectLedgers = {
@@ -362,13 +510,53 @@ export async function getSession(): Promise<Session | null> {
   return data.session
 }
 
+export type AuthCapabilities = {
+  anonymous: boolean
+  google: boolean
+  apple: boolean
+  passkey: boolean
+}
+
+export async function getAuthCapabilities(): Promise<AuthCapabilities> {
+  const response = await fetch(`${PERCEPTION_SUPABASE_URL}/auth/v1/settings`, {
+    headers: { apikey: publishableKey },
+  })
+  if (!response.ok) return { anonymous: false, google: false, apple: false, passkey: false }
+  const settings = await response.json() as {
+    external?: Record<string, boolean>
+    passkeys_enabled?: boolean
+  }
+  return {
+    anonymous: Boolean(settings.external?.anonymous_users),
+    google: Boolean(settings.external?.google),
+    apple: Boolean(settings.external?.apple),
+    passkey: Boolean(settings.passkeys_enabled),
+  }
+}
+
+export async function startGuestSession(): Promise<Session> {
+  const client = requireBackend()
+  const { data, error } = await client.auth.signInAnonymously()
+  if (error) throw error
+  if (!data.session) throw new Error('Perception could not start a guest session.')
+  return data.session
+}
+
 function authRedirectTo(): string {
   const configuredAppUrl = (import.meta.env.VITE_APP_URL || 'https://www.perceptionai.io').replace(/\/$/, '')
-  const redirectBase = typeof window === 'undefined'
-    ? configuredAppUrl
-    : /^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname)
-      ? configuredAppUrl
-      : window.location.origin
+
+  if (typeof window === 'undefined') {
+    return `${configuredAppUrl}/?auth=return`
+  }
+
+  const currentOrigin = window.location.origin.replace(/\/$/, '')
+  const isCanonicalProduction =
+    currentOrigin === 'https://www.perceptionai.io' ||
+    currentOrigin === 'https://perceptionai.io'
+
+  // Never let preview/local deployments become the auth callback destination.
+  // Supabase auth should always return users to the canonical Perception app.
+  const redirectBase = isCanonicalProduction ? currentOrigin : configuredAppUrl
   return `${redirectBase}/?auth=return`
 }
 
@@ -428,13 +616,141 @@ export async function signOut(): Promise<void> {
   if (error) throw error
 }
 
-export async function submitObjective(statement: string): Promise<ObjectiveRuntimeResult> {
+export async function submitObjective(
+  statement: string,
+  intentShadow?: IntentShadowHandoff,
+  operatorTarget?: string,
+): Promise<ObjectiveRuntimeResult> {
   const client = requireBackend()
   const { data, error } = await client.functions.invoke<ObjectiveRuntimeResult>('perceive-objective', {
-    body: { statement },
+    body: {
+      statement,
+      ...(intentShadow ? { intent_shadow: intentShadow } : {}),
+      ...(operatorTarget ? { operator_target: operatorTarget } : {}),
+    },
   })
   if (error) throw error
   if (!data) throw new Error('Perception runtime returned no result.')
+  return data
+}
+
+export async function previewIntentShadow(
+  text: string,
+  mode: IntentShadowPreview['mode'],
+  signal?: AbortSignal,
+): Promise<IntentShadowPreview | null> {
+  const client = requireBackend()
+  const request = client.rpc('perception_preview_intent_shadow', {
+    p_text: text,
+    p_mode: mode,
+    p_limit: 3,
+  })
+  const { data, error } = signal
+    ? await request.abortSignal(signal)
+    : await request
+
+  if (signal?.aborted) return null
+  if (error) {
+    if (error.code === 'PGRST202' || error.code === '42883') return null
+    throw error
+  }
+
+  return data ? data as IntentShadowPreview : null
+}
+
+async function invokeExternalPresearch<T>(
+  body: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<T> {
+  const client = requireBackend()
+  const { data: sessionData, error: sessionError } = await client.auth.getSession()
+  if (sessionError) throw sessionError
+  const accessToken = sessionData.session?.access_token
+  if (!accessToken) throw new Error('Perception external pre-search requires an active session.')
+
+  const response = await fetch(
+    `${PERCEPTION_SUPABASE_URL}/functions/v1/anticipate-objective`,
+    {
+      method: 'POST',
+      headers: {
+        apikey: publishableKey,
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal,
+    },
+  )
+
+  const payload = await response.json().catch(() => ({})) as Record<string, unknown>
+  if (!response.ok) {
+    const message = typeof payload.error === 'string'
+      ? payload.error
+      : 'Perception external pre-search is unavailable.'
+    throw new Error(message)
+  }
+
+  return payload as T
+}
+
+export async function getExternalPresearchStatus(
+  signal?: AbortSignal,
+): Promise<ExternalPresearchStatus> {
+  return invokeExternalPresearch<ExternalPresearchStatus>({ action: 'status' }, signal)
+}
+
+export async function setExternalPresearchEnabled(enabled: boolean): Promise<void> {
+  const client = requireBackend()
+  const { data: sessionData, error: sessionError } = await client.auth.getSession()
+  if (sessionError) throw sessionError
+  const userId = sessionData.session?.user.id
+  if (!userId) throw new Error('Perception external pre-search requires an active session.')
+
+  const now = new Date().toISOString()
+  const { error } = await client
+    .from('perception_runtime_preferences')
+    .upsert({
+      user_id: userId,
+      external_anticipatory_search_enabled: enabled,
+      external_search_consent_version: 1,
+      external_search_consented_at: enabled ? now : null,
+      updated_at: now,
+    }, {
+      onConflict: 'user_id',
+    })
+
+  if (error) throw error
+}
+
+export async function previewExternalIntent(
+  query: string,
+  mode: Exclude<IntentShadowPreview['mode'], 'forecast'>,
+  stableDwellMs: number,
+  signal?: AbortSignal,
+): Promise<ExternalPresearchPreview | null> {
+  if (signal?.aborted) return null
+
+  const result = await invokeExternalPresearch<ExternalPresearchPreview>({
+    action: 'preview',
+    query,
+    mode,
+    stable_dwell_ms: stableDwellMs,
+  }, signal)
+
+  return signal?.aborted ? null : result
+}
+
+export async function resumeObjective(projectId: string, objectiveId?: string): Promise<ObjectiveRuntimeResult> {
+  const client = requireBackend()
+  const { data, error } = await client.functions.invoke<ObjectiveRuntimeResult>('perceive-objective', {
+    body: {
+      action: 'resume',
+      project_id: projectId,
+      objective_id: objectiveId,
+    },
+  })
+  if (error) throw error
+  if (!data) throw new Error('Perception continuation returned no result.')
   return data
 }
 
@@ -629,6 +945,20 @@ export type GitHubOperatorSelfTestResult = {
   changed_files: string[]
 }
 
+export type GitHubOperatorSelfTestPlan = {
+  project_id: string
+  contract: GitHubActionContract
+  files: Array<{ path: string; content: string }>
+}
+
+export type GitHubApprovalLedgerRow = {
+  project_id: string
+  action_key: string
+  phase: ProjectLedgers['execution'][number]['phase']
+  details: Record<string, unknown>
+  created_at: string
+}
+
 type GitHubOperatorResponse = {
   ok: boolean
   phase?: string
@@ -639,54 +969,187 @@ type GitHubOperatorResponse = {
   error?: string
 }
 
-export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfTestResult> {
+function validateOperatorProofContract(contract: GitHubActionContract | undefined): {
+  contract: GitHubActionContract
+  files: Array<{ path: string; content: string }>
+} {
+  if (!contract) {
+    throw new Error('Perception did not produce a bounded GitHub action contract for the Operator proof.')
+  }
+  if (!contract.repository || !contract.target) {
+    throw new Error(`GitHub action contract is missing source scope: ${contract.missing_fields.join(', ') || 'repository/target'}.`)
+  }
+  if (contract.target !== 'github://DopestT/perception-ai@main') {
+    throw new Error(`Operator proof contract resolved an unexpected target: ${contract.target}.`)
+  }
+  if (!contract.base_sha || !/^[0-9a-f]{40}$/i.test(contract.base_sha)) {
+    throw new Error('The P1 code-plan materializer did not pin the proof to a valid GitHub base commit.')
+  }
+
+  const files = contract.files_or_patch?.kind === 'files'
+    ? contract.files_or_patch.files
+    : []
+
+  if (files.length !== 1 || files[0]?.path !== 'docs/OPERATOR_LIVE_PROOF.md') {
+    throw new Error(
+      'The P1 code-plan materializer did not produce the exact bounded Operator proof file; execution is blocked.',
+    )
+  }
+
+  return { contract, files }
+}
+
+export function recoverPendingPerceptionGitHubSelfTest(
+  rows: GitHubApprovalLedgerRow[],
+): GitHubOperatorSelfTestPlan | null {
+  const seen = new Set<string>()
+
+  for (const row of rows) {
+    if (!row.action_key || seen.has(row.action_key)) continue
+    seen.add(row.action_key)
+    if (row.phase !== 'intended') continue
+
+    const rawContract = row.details?.action_contract
+    if (!rawContract || typeof rawContract !== 'object' || Array.isArray(rawContract)) continue
+
+    try {
+      const resolved = validateOperatorProofContract(rawContract as GitHubActionContract)
+      if (resolved.contract.action_key !== row.action_key) continue
+      if (resolved.contract.project_id !== row.project_id) continue
+      if (resolved.contract.permission.status === 'active') continue
+
+      return {
+        project_id: row.project_id,
+        contract: resolved.contract,
+        files: resolved.files,
+      }
+    } catch {
+      // Ignore stale or malformed ledger payloads and continue to the next action.
+    }
+  }
+
+  return null
+}
+
+export async function getPendingPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfTestPlan | null> {
   const client = requireBackend()
+  const { data: authData, error: authError } = await client.auth.getUser()
+  if (authError) throw authError
+  if (!authData.user) return null
+
+  const { data, error } = await client
+    .from('perception_execution_ledger')
+    .select('project_id, action_key, phase, details, created_at')
+    .eq('capability', 'code')
+    .in('permission_level', ['P2', 'P3'])
+    .order('created_at', { ascending: false })
+    .limit(200)
+
+  if (error) throw error
+  return recoverPendingPerceptionGitHubSelfTest((data ?? []) as GitHubApprovalLedgerRow[])
+}
+
+export async function denyPerceptionGitHubSelfTest(
+  plan: GitHubOperatorSelfTestPlan,
+  reason = 'user_denied',
+): Promise<void> {
+  const client = requireBackend()
+  const resolved = validateOperatorProofContract(plan.contract)
+
+  if (resolved.contract.project_id !== plan.project_id) {
+    throw new Error('The denial plan no longer matches its Project World.')
+  }
+
+  const { error } = await client.rpc('perception_deny_operator_action', {
+    p_project_id: plan.project_id,
+    p_action_key: resolved.contract.action_key,
+    p_reason: reason,
+  })
+  if (error) throw error
+}
+
+export async function preparePerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfTestPlan> {
+  const client = requireBackend()
+  const { data: authData, error: authError } = await client.auth.getUser()
+  if (authError) throw authError
+  if (!authData.user) throw new Error('Sign in before preparing the Operator proof.')
+
   const objective = await submitObjective(
-    'Change the Perception GitHub repository on a bounded branch, verify the external effect independently, and update Project World without changing main.',
+    'Create docs/OPERATOR_LIVE_PROOF.md in the Perception GitHub repository on a bounded branch with a short non-secret proof message that says the P1 materializer planned this change. Verify the external effect independently and update Project World without changing main.',
+    undefined,
+    'github://DopestT/perception-ai@main',
   )
   if (!objective.ok || !objective.project_id) {
     throw new Error(objective.stage || 'Could not create the Operator self-test Project World.')
   }
 
+  const candidate = objective.action_contracts?.find(
+    (action) => action.adapter === 'github-operator' && action.permission.level === 'P2',
+  )
+
+  if (!candidate) {
+    const attachment = objective.operator_attachment
+    if (attachment && !attachment.principal_enabled) {
+      throw new Error('The Operator proof target is not enabled for this account.')
+    }
+    if (attachment && !attachment.source_enabled) {
+      throw new Error('The Perception GitHub repository is not attached as an enabled Project World source.')
+    }
+    if (attachment && !attachment.read_credential_present) {
+      throw new Error('The server-side GitHub read credential is not configured for the Operator proof.')
+    }
+    if (attachment && !attachment.source_bound) {
+      throw new Error('Perception could not attach the verified GitHub source to the proof Project World.')
+    }
+  }
+
+  const resolved = validateOperatorProofContract(candidate)
+
+  if (resolved.contract.permission.status === 'active') {
+    throw new Error('The prepared proof unexpectedly already has an active permission grant.')
+  }
+
+  return {
+    project_id: objective.project_id,
+    contract: resolved.contract,
+    files: resolved.files,
+  }
+}
+
+export async function executePerceptionGitHubSelfTest(
+  plan: GitHubOperatorSelfTestPlan,
+): Promise<GitHubOperatorSelfTestResult> {
+  const client = requireBackend()
   const { data: authData, error: authError } = await client.auth.getUser()
   if (authError) throw authError
-  if (!authData.user) throw new Error('Sign in before running the Operator self-test.')
+  if (!authData.user) throw new Error('Sign in before approving the Operator proof.')
 
-  const projectId = objective.project_id
-  const repository = 'DopestT/perception-ai'
-  const baseBranch = 'main'
-  const target = `github://${repository}@${baseBranch}`
-  const branch = `perception/operator-proof-${Date.now()}`
+  const resolved = validateOperatorProofContract(plan.contract)
+  const contract = resolved.contract
+  const files = resolved.files
+  const projectId = plan.project_id
+
+  if (contract.project_id !== projectId) {
+    throw new Error('The approval plan no longer matches its Project World.')
+  }
+
   const { data: grantId, error: grantError } = await client.rpc('perception_request_operator_proof_grant', {
     p_project_id: projectId,
   })
-
   if (grantError) throw grantError
   if (!grantId) throw new Error('Perception could not create the temporary Operator permission grant.')
 
-  const proofContent = [
-    '# Perception Operator Live Proof',
-    '',
-    'This file was created by the Perception GitHub Operator on a bounded branch.',
-    '',
-    `Project World: ${projectId}`,
-    `Branch: ${branch}`,
-    `Observed at: ${new Date().toISOString()}`,
-    '',
-    'Invariant: main is not modified by this proof.',
-    '',
-  ].join('\n')
-
   const body = {
-    repository,
-    base_branch: baseBranch,
-    branch,
-    summary: 'Perception live operator proof',
-    files: [{ path: 'docs/OPERATOR_LIVE_PROOF.md', content: proofContent }],
+    repository: contract.repository!,
+    base_branch: contract.base_branch,
+    expected_base_sha: contract.base_sha!,
+    branch: contract.working_branch,
+    summary: contract.desired_changes || 'Perception live operator proof',
+    files,
     permission: {
       project_id: projectId,
       capability: 'code' as const,
-      target,
+      target: contract.target!,
       level: 'P2' as const,
     },
   }
@@ -710,7 +1173,7 @@ export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfT
 
     return {
       project_id: projectId,
-      branch: executed.branch || branch,
+      branch: executed.branch || contract.working_branch,
       commit_sha: executed.commit_sha || null,
       changed_files: executed.changed_files || [],
     }
@@ -719,4 +1182,9 @@ export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfT
       p_grant_id: grantId,
     })
   }
+}
+
+export async function runPerceptionGitHubSelfTest(): Promise<GitHubOperatorSelfTestResult> {
+  const plan = await preparePerceptionGitHubSelfTest()
+  return executePerceptionGitHubSelfTest(plan)
 }

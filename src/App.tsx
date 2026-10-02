@@ -1,32 +1,43 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Clock3, Compass, KeyRound, LogOut, Mail, Search, Sparkles, X } from 'lucide-react'
+import { Check, Clock3, Compass, KeyRound, LogOut, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { ForecastPanel } from './ForecastPanel'
+import { GrowthOperatorPanel } from './GrowthOperatorPanel'
 import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPortal'
 import {
   attachKalshiMarketSignal,
   backendConfigured,
   createForecast,
+  getAuthCapabilities,
   getForecastCalibration,
   getLatestForecast,
   getLatestProjectWorld,
+  getPendingPerceptionGitHubSelfTest,
   getProjectLedgers,
   getProjectWorld,
   getSession,
   requestEmailSignIn,
   registerPasskey,
   resolveForecast,
+  resumeObjective,
   signInWithOAuthProvider,
   signInWithPasskey,
+  startGuestSession,
   signInWithPassword,
   signUpWithPassword,
   runAutonomousForecast,
-  runPerceptionGitHubSelfTest,
+  denyPerceptionGitHubSelfTest,
+  executePerceptionGitHubSelfTest,
+  preparePerceptionGitHubSelfTest,
+  previewIntentShadow,
   signOut,
   submitObjective,
   supabase,
   type Forecast,
+  type AuthCapabilities,
   type ForecastCalibration,
+  type GitHubOperatorSelfTestPlan,
+  type IntentShadowPreview,
   type ObjectiveRuntimeResult,
   type ProjectLedgers,
   type ProjectWorld,
@@ -34,6 +45,8 @@ import {
 
 const PENDING_OBJECTIVE_KEY = 'perception:pending-objective:v2'
 const PENDING_TTL_MS = 30 * 60 * 1000
+const INTENT_SHADOW_DEBOUNCE_MS = 320
+const INTENT_SHADOW_MIN_CHARS = 6
 const targetStages = [
   'UNDERSTOOD',
   'PROJECT WORLD CREATED',
@@ -144,10 +157,13 @@ function App() {
   const [attachingMarket, setAttachingMarket] = useState(false)
   const [runningIntelligence, setRunningIntelligence] = useState(false)
   const [runningOperatorTest, setRunningOperatorTest] = useState(false)
+  const [continuingRoute, setContinuingRoute] = useState(false)
+  const [operatorPlan, setOperatorPlan] = useState<GitHubOperatorSelfTestPlan | null>(null)
   const [registeringPasskey, setRegisteringPasskey] = useState(false)
   const [marketNote, setMarketNote] = useState('')
   const [intelligenceNote, setIntelligenceNote] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
+  const [authCapabilities, setAuthCapabilities] = useState<AuthCapabilities>({ anonymous: false, google: false, apple: false, passkey: false })
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
@@ -156,17 +172,27 @@ function App() {
   const [typingEnergy, setTypingEnergy] = useState(0)
   const resumeInFlight = useRef(false)
   const typingTimer = useRef<number | null>(null)
+  const intentShadowTimer = useRef<number | null>(null)
+  const intentShadowAbort = useRef<AbortController | null>(null)
+  const intentShadowGeneration = useRef(0)
+  const intentShadowRef = useRef<{ text: string; mode: ExperienceMode; preview: IntentShadowPreview } | null>(null)
+  const authHydratedUserRef = useRef<string | null>(null)
 
   const completedStages = useMemo(() => inferCompletedStages(world, runtimeResult), [world, runtimeResult])
   const activeExperience =
     experienceMode === 'forecast'
       ? forecastExperience
       : experienceModes.find((mode) => mode.id === experienceMode) ?? experienceModes[1]
+  const isGuest = Boolean(session?.user?.is_anonymous)
 
   const loadLatestWorld = useCallback(async () => {
-    const latest = await getLatestProjectWorld()
+    const [latest, pendingApproval] = await Promise.all([
+      getLatestProjectWorld(),
+      getPendingPerceptionGitHubSelfTest(),
+    ])
     setWorld(latest)
     setLedgers(latest ? await getProjectLedgers(latest.project.id) : null)
+    setOperatorPlan(pendingApproval)
   }, [])
 
   const loadForecastState = useCallback(async () => {
@@ -188,7 +214,25 @@ function App() {
     setPortalMode('charging')
 
     try {
-      const request = submitObjective(statement)
+      const preparedShadow = intentShadowRef.current
+      const shadowStillMatches = Boolean(
+        preparedShadow
+        && statement.startsWith(preparedShadow.text.trim())
+      )
+      const candidateScenarioIds = shadowStillMatches
+        ? Array.from(new Set(
+            preparedShadow!.preview.candidates.flatMap((candidate) => [
+              ...candidate.scenarios.map((scenario) => scenario.id),
+              ...(candidate.learning_candidates ?? []).map((learning) => learning.scenario_id),
+            ]),
+          )).slice(0, 6)
+        : []
+
+      const request = submitObjective(statement, candidateScenarioIds.length ? {
+        source: 'intent_shadow_v0_8',
+        prepared_at: preparedShadow?.preview.prepared_at,
+        candidate_scenario_ids: candidateScenarioIds,
+      } : undefined)
       await delay(280)
       setPortalMode('absorbing')
       const result = await request
@@ -215,6 +259,58 @@ function App() {
       setBusy(false)
     }
   }, [])
+
+  const handleContinueRoute = useCallback(async () => {
+    if (!world || busy || continuingRoute) return
+    const objective = world.objectives.at(-1)
+    if (!objective?.id) {
+      setError('No objective is available to continue.')
+      return
+    }
+
+    setContinuingRoute(true)
+    setBusy(true)
+    setError('')
+    setNotice('')
+    setPortalMode('charging')
+
+    try {
+      const request = resumeObjective(world.project.id, objective.id)
+      await delay(220)
+      setPortalMode('absorbing')
+      const result = await request
+      if (!result.ok || !result.project_id) throw new Error(result.stage || 'Perception could not continue this route.')
+
+      const [nextWorld, nextLedgers] = await Promise.all([
+        getProjectWorld(result.project_id),
+        getProjectLedgers(result.project_id),
+      ])
+      setRuntimeResult(result)
+      setWorld(nextWorld)
+      setLedgers(nextLedgers)
+      setPortalMode('transitioning')
+      await delay(420)
+      setPortalMode('idle')
+
+      const execution = result.local_executions?.at(-1)
+      const phase = execution && typeof execution.phase === 'string' ? execution.phase : null
+      if (phase === 'in_progress') {
+        setNotice('This route already has an active leased worker. Perception did not start a duplicate.')
+      } else if (phase === 'retry_wait') {
+        setNotice('The previous attempt is inside its bounded retry window. Perception did not duplicate the work.')
+      } else if (phase === 'retry_exhausted') {
+        setNotice('This route reached its bounded retry limit. The failure remains explicit in Project World.')
+      } else {
+        setNotice('Perception continued the existing Project World and verified the next bounded work it could safely complete.')
+      }
+    } catch (cause) {
+      setPortalMode('focused')
+      setError(cause instanceof Error ? cause.message : 'Perception could not continue this route.')
+    } finally {
+      setContinuingRoute(false)
+      setBusy(false)
+    }
+  }, [busy, continuingRoute, world])
 
   const processForecast = useCallback(async (question: string, deadline: string) => {
     if (resumeInFlight.current) return
@@ -276,32 +372,63 @@ function App() {
     }
 
     let active = true
-    const acceptSession = async (nextSession: Session | null) => {
+    const acceptSession = (nextSession: Session | null) => {
       if (!active) return
       setSession(nextSession)
-      if (!nextSession) return
+      if (!nextSession) {
+        authHydratedUserRef.current = null
+        return
+      }
       setAuthOpen(false)
       setAuthSent(false)
-      const pending = readPendingObjective()
-      if (pending) {
-        setExperienceMode(pending.mode)
-        if (pending.mode === 'forecast') await processForecast(pending.statement, pending.deadline || defaultForecastDeadline())
-        else await processObjective(pending.statement)
-      } else {
-        await Promise.all([loadLatestWorld(), loadForecastState()])
+    }
+
+    const hydrateSession = async (nextSession: Session) => {
+      if (!active) return
+      const hydrationKey = `${nextSession.user.id}:${nextSession.user.is_anonymous ? 'anonymous' : 'permanent'}`
+      if (authHydratedUserRef.current === hydrationKey) return
+      authHydratedUserRef.current = hydrationKey
+
+      try {
+        const pending = readPendingObjective()
+        if (pending) {
+          setExperienceMode(pending.mode)
+          if (pending.mode === 'forecast') await processForecast(pending.statement, pending.deadline || defaultForecastDeadline())
+          else await processObjective(pending.statement)
+        } else {
+          await Promise.all([loadLatestWorld(), loadForecastState()])
+        }
+      } catch (cause) {
+        authHydratedUserRef.current = null
+        throw cause
       }
     }
 
+    void getAuthCapabilities().then(setAuthCapabilities).catch(() => undefined)
+
     getSession()
-      .then(acceptSession)
+      .then(async (nextSession) => {
+        acceptSession(nextSession)
+        if (nextSession) await hydrateSession(nextSession)
+      })
       .catch((cause) => { if (active) setError(cause instanceof Error ? cause.message : 'Could not restore the Perception session.') })
       .finally(() => { if (active) setLoading(false) })
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!active) return
-      void acceptSession(nextSession).catch((cause) => {
-        if (active) setError(cause instanceof Error ? cause.message : 'Could not continue the Perception session.')
-      })
+      acceptSession(nextSession)
+
+      // Supabase documents that awaiting async Supabase calls directly inside
+      // onAuthStateChange can deadlock the client. Defer post-auth hydration
+      // until after the auth callback returns.
+      if (event === 'SIGNED_IN' && nextSession) {
+        window.setTimeout(() => {
+          if (!active) return
+          void hydrateSession(nextSession).catch((cause) => {
+            if (active) setError(cause instanceof Error ? cause.message : 'Could not continue the Perception session.')
+          })
+        }, 0)
+      }
     })
 
     return () => {
@@ -312,17 +439,35 @@ function App() {
 
   useEffect(() => () => {
     if (typingTimer.current) window.clearTimeout(typingTimer.current)
+    if (intentShadowTimer.current) window.clearTimeout(intentShadowTimer.current)
+    intentShadowAbort.current?.abort()
   }, [])
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     const statement = input.trim()
     if (!statement || busy) return
+    if (intentShadowTimer.current) window.clearTimeout(intentShadowTimer.current)
+    intentShadowAbort.current?.abort()
+    intentShadowAbort.current = null
+    intentShadowGeneration.current += 1
 
     if (!session) {
       savePendingObjective(statement, experienceMode, experienceMode === 'forecast' ? forecastDeadline : undefined)
       setPortalMode('charging')
-      await delay(260)
+      setError('')
+
+      try {
+        const guestSession = await startGuestSession()
+        setSession(guestSession)
+        if (experienceMode === 'forecast') await processForecast(statement, forecastDeadline)
+        else await processObjective(statement)
+        return
+      } catch {
+        // Guest auth may be disabled or temporarily unavailable. Fall back to permanent account creation.
+      }
+
+      setAuthMode('signup')
       setPortalMode('auth')
       setAuthOpen(true)
       return
@@ -391,26 +536,44 @@ function App() {
     }
   }
 
-  const handlePasswordAuth = async (event: FormEvent) => {
+  const handlePasswordAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const address = email.trim()
-    if (!address || password.length < 8 || authBusy) return
+    if (authBusy) return
 
+    // Read the DOM form values rather than relying only on React state.
+    // iOS/Safari password autofill can visibly populate a controlled input
+    // before React receives an onChange event.
+    const formData = new FormData(event.currentTarget)
+    const address = String(formData.get('email') ?? email).trim()
+    const submittedPassword = String(formData.get('password') ?? password)
+
+    if (!address) {
+      setError('Enter your email address.')
+      return
+    }
+    if (submittedPassword.length < 8) {
+      setError('Enter your password to continue.')
+      return
+    }
+
+    setEmail(address)
+    setPassword(submittedPassword)
     setAuthBusy(true)
     setError('')
-    setNotice('')
+    setNotice(authMode === 'signup' ? 'Creating your Perception account…' : 'Signing you in…')
 
     try {
       if (authMode === 'signup') {
-        const result = await signUpWithPassword(address, password)
+        const result = await signUpWithPassword(address, submittedPassword)
         if (result.requiresEmailConfirmation) {
           setAuthSent(true)
           setNotice('Check your email once to confirm this account. After that, use your password or passkey.')
         }
       } else {
-        await signInWithPassword(address, password)
+        await signInWithPassword(address, submittedPassword)
       }
     } catch (cause) {
+      setNotice('')
       setError(cause instanceof Error ? cause.message : 'Could not authenticate this account.')
     } finally {
       setAuthBusy(false)
@@ -483,16 +646,39 @@ function App() {
     }
   }
 
-  const handleOperatorSelfTest = async () => {
+  const handlePrepareOperatorProof = async () => {
     if (runningOperatorTest || busy) return
     setRunningOperatorTest(true)
     setBusy(true)
     setError('')
-    setNotice('Running Perception\'s bounded GitHub self-test…')
+    setNotice('Materializing a bounded GitHub proof for review…')
     setPortalMode('charging')
 
     try {
-      const result = await runPerceptionGitHubSelfTest()
+      const plan = await preparePerceptionGitHubSelfTest()
+      setOperatorPlan(plan)
+      setPortalMode('focused')
+      setNotice('P1 planning verified. Review the exact P2 action contract before execution.')
+    } catch (cause) {
+      setPortalMode('focused')
+      setError(cause instanceof Error ? cause.message : 'Perception could not prepare the GitHub proof.')
+      setNotice('')
+    } finally {
+      setRunningOperatorTest(false)
+      setBusy(false)
+    }
+  }
+
+  const handleApproveOperatorProof = async () => {
+    if (!operatorPlan || runningOperatorTest || busy) return
+    setRunningOperatorTest(true)
+    setBusy(true)
+    setError('')
+    setNotice('Executing the approved bounded GitHub proof…')
+    setPortalMode('charging')
+
+    try {
+      const result = await executePerceptionGitHubSelfTest(operatorPlan)
       const [nextWorld, nextLedgers] = await Promise.all([
         getProjectWorld(result.project_id),
         getProjectLedgers(result.project_id),
@@ -500,16 +686,42 @@ function App() {
       setRuntimeResult(null)
       setWorld(nextWorld)
       setLedgers(nextLedgers)
+      setOperatorPlan(null)
       setPortalMode('transitioning')
       await delay(420)
       setPortalMode('idle')
       const commit = result.commit_sha ? result.commit_sha.slice(0, 8) : 'observed commit'
-      setNotice(`Operator proof verified: ${commit} on ${result.branch}. main was not modified.`)
+      setNotice(`Operator proof verified: ${commit} on ${result.branch}. main was not modified and the temporary P2 grant was revoked.`)
       window.setTimeout(() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
     } catch (cause) {
       setPortalMode('focused')
-      setError(cause instanceof Error ? cause.message : 'Perception could not complete the GitHub self-test.')
+      setError(cause instanceof Error ? cause.message : 'Perception could not complete the approved GitHub proof.')
       setNotice('')
+    } finally {
+      setRunningOperatorTest(false)
+      setBusy(false)
+    }
+  }
+
+  const handleDenyOperatorProof = async () => {
+    if (!operatorPlan || runningOperatorTest || busy) return
+    setRunningOperatorTest(true)
+    setBusy(true)
+    setError('')
+    setNotice('')
+
+    try {
+      const deniedProjectId = operatorPlan.project_id
+      await denyPerceptionGitHubSelfTest(operatorPlan)
+      setOperatorPlan(null)
+      if (world?.project.id === deniedProjectId) {
+        setLedgers(await getProjectLedgers(deniedProjectId))
+      }
+      setPortalMode('idle')
+      setNotice('Operator action denied. The decision is now recorded in the Execution Ledger.')
+    } catch (cause) {
+      setPortalMode('focused')
+      setError(cause instanceof Error ? cause.message : 'Perception could not record the denial.')
     } finally {
       setRunningOperatorTest(false)
       setBusy(false)
@@ -543,6 +755,42 @@ function App() {
       setTypingEnergy(Math.max(0.08, activity * 0.35))
       setPortalMode('focused')
     }, 420)
+
+    if (intentShadowTimer.current) window.clearTimeout(intentShadowTimer.current)
+    intentShadowAbort.current?.abort()
+    intentShadowAbort.current = null
+    const generation = ++intentShadowGeneration.current
+
+    const provisional = value.trim()
+    if (
+      !session
+      || busy
+      || experienceMode === 'forecast'
+      || provisional.length < INTENT_SHADOW_MIN_CHARS
+    ) {
+      intentShadowRef.current = null
+      return
+    }
+
+    intentShadowTimer.current = window.setTimeout(() => {
+      const controller = new AbortController()
+      intentShadowAbort.current = controller
+      const shadowText = provisional
+      const shadowMode = experienceMode
+
+      void previewIntentShadow(shadowText, shadowMode, controller.signal)
+        .then((preview) => {
+          if (
+            controller.signal.aborted
+            || intentShadowGeneration.current !== generation
+            || !preview
+          ) return
+          intentShadowRef.current = { text: shadowText, mode: shadowMode, preview }
+        })
+        .catch((cause) => {
+          if (!controller.signal.aborted) console.debug('Perception intent shadow skipped.', cause)
+        })
+    }, INTENT_SHADOW_DEBOUNCE_MS)
   }
 
   const closeAuth = () => {
@@ -554,6 +802,11 @@ function App() {
 
   const selectExperienceMode = (nextMode: ExperienceMode) => {
     if (busy || nextMode === experienceMode) return
+    if (intentShadowTimer.current) window.clearTimeout(intentShadowTimer.current)
+    intentShadowAbort.current?.abort()
+    intentShadowAbort.current = null
+    intentShadowGeneration.current += 1
+    intentShadowRef.current = null
     setExperienceMode(nextMode)
     setError('')
     setNotice('')
@@ -568,16 +821,23 @@ function App() {
           <span>PERCEPTION</span>
         </button>
         {session ? (
-          <div className="account-actions">
-            <button className="quiet-action" type="button" onClick={handleOperatorSelfTest} disabled={runningOperatorTest || busy}>
-              {runningOperatorTest ? 'OPERATOR RUNNING…' : 'RUN OPERATOR PROOF'}
-            </button>
-            <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth' })}>PROJECT WORLD</button>
-            <button className="quiet-action" type="button" onClick={handleRegisterPasskey} disabled={registeringPasskey}>
-              {registeringPasskey ? 'ADDING PASSKEY…' : 'ENABLE PASSKEY'}
-            </button>
-            <button className="icon-action" type="button" onClick={logout} aria-label="Sign out"><LogOut size={15} /></button>
-          </div>
+          isGuest ? (
+            <div className="account-actions">
+              <span className="guest-session-pill">TRY MODE</span>
+              <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth' })}>PROJECT WORLD</button>
+            </div>
+          ) : (
+            <div className="account-actions">
+              <button className="quiet-action" type="button" onClick={handlePrepareOperatorProof} disabled={runningOperatorTest || busy}>
+                {runningOperatorTest ? 'PREPARING…' : 'PREPARE OPERATOR PROOF'}
+              </button>
+              <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth' })}>PROJECT WORLD</button>
+              <button className="quiet-action" type="button" onClick={handleRegisterPasskey} disabled={registeringPasskey}>
+                {registeringPasskey ? 'ADDING PASSKEY…' : 'ENABLE PASSKEY'}
+              </button>
+              <button className="icon-action" type="button" onClick={logout} aria-label="Sign out"><LogOut size={15} /></button>
+            </div>
+          )
         ) : (
           <button className="sign-in-link" type="button" onClick={() => { setPortalMode('auth'); setAuthOpen(true) }}>SIGN IN</button>
         )}
@@ -639,6 +899,7 @@ function App() {
               </div>
             )}
             <p className="track-line">SEE <span>•</span> HEAR <span>•</span> UNDERSTAND <span>•</span> BUILD</p>
+            {isGuest && <p className="guest-session-note">TRY MODE · NO SIGN-UP REQUIRED · THIS BROWSER REMEMBERS YOUR WORK</p>}
             {notice && <p className="hero-notice" role="status"><Check size={14} /> {notice}</p>}
             {error && !authOpen && <p className="hero-error" role="alert">{error}</p>}
           </div>
@@ -668,7 +929,14 @@ function App() {
               <h1>{world.project.name || 'Your idea is in motion.'}</h1>
               <p>{world.project.current_reality || 'Perception has established the first durable project state.'}</p>
             </div>
-            <div className="world-status"><strong>{completedStages.size}/7</strong><span>verified stages</span></div>
+            <div className="world-heading-actions">
+              <div className="world-status"><strong>{completedStages.size}/7</strong><span>verified stages</span></div>
+              {!forecast && world.objectives.at(-1) && !['realized', 'superseded'].includes(world.objectives.at(-1)?.status || '') && (
+                <button className="continue-route" type="button" onClick={handleContinueRoute} disabled={busy || continuingRoute}>
+                  {continuingRoute ? 'CONTINUING…' : 'CONTINUE ROUTE'}
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="stage-strip" aria-label="Perception verified runtime">
@@ -704,6 +972,8 @@ function App() {
               </div>
             </div>
           )}
+
+          {!isGuest && <GrowthOperatorPanel projectId={world.project.id} />}
 
           <div className="world-grid">
             <article className="world-card world-card--wide">
@@ -785,6 +1055,46 @@ function App() {
         </section>
       )}
 
+      {operatorPlan && (
+        <div className="approval-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !runningOperatorTest) setOperatorPlan(null)
+        }}>
+          <section className="approval-card" role="dialog" aria-modal="true" aria-labelledby="operator-approval-title">
+            <button className="auth-close" type="button" onClick={() => setOperatorPlan(null)} disabled={runningOperatorTest} aria-label="Close approval review"><X size={18} /></button>
+            <div className="approval-icon"><ShieldCheck size={18} /></div>
+            <p className="section-kicker">P2 · EXPLICIT APPROVAL</p>
+            <h2 id="operator-approval-title">Review the exact GitHub change.</h2>
+            <p className="approval-intro">P1 has only inspected and planned. Closing this review does not approve or deny it; the pending action will remain recoverable from the Execution Ledger.</p>
+
+            <div className="approval-grid">
+              <div><span>STATUS</span><strong>AWAITING YOUR DECISION</strong></div>
+              <div><span>PERMISSION WINDOW</span><strong>15 minutes after approval · revoked after execution</strong></div>
+              <div><span>REPOSITORY</span><strong>{operatorPlan.contract.repository}</strong></div>
+              <div><span>BASE</span><strong>{operatorPlan.contract.base_branch} · {operatorPlan.contract.base_sha?.slice(0, 10)}</strong></div>
+              <div className="approval-wide"><span>WORKING BRANCH</span><strong>{operatorPlan.contract.working_branch}</strong></div>
+              <div className="approval-wide"><span>PLANNED FILES</span><strong>{operatorPlan.files.map((file) => file.path).join(', ')}</strong></div>
+              <div className="approval-wide"><span>TESTS</span><strong>{operatorPlan.contract.tests.join(' · ') || 'Bounded scope and independent GitHub observation'}</strong></div>
+              <div className="approval-wide"><span>VERIFICATION</span><strong>{operatorPlan.contract.verification.requirements.join(' · ')}</strong></div>
+              <div><span>PERMISSION</span><strong>{operatorPlan.contract.permission.level} · {operatorPlan.contract.permission.capability}</strong></div>
+              <div><span>ROLLBACK</span><strong>Delete working branch · main remains untouched</strong></div>
+            </div>
+
+            <div className="approval-guardrail">
+              <ShieldCheck size={14} />
+              <span>If {operatorPlan.contract.base_branch} no longer matches the pinned commit, execution stops and Perception must rematerialize the plan.</span>
+            </div>
+
+            <div className="approval-actions">
+              <button type="button" className="approval-cancel" onClick={() => setOperatorPlan(null)} disabled={runningOperatorTest}>NOT NOW</button>
+              <button type="button" className="approval-deny" onClick={handleDenyOperatorProof} disabled={runningOperatorTest}>DENY</button>
+              <button type="button" className="approval-run" onClick={handleApproveOperatorProof} disabled={runningOperatorTest}>
+                {runningOperatorTest ? 'EXECUTING…' : 'APPROVE P2 & RUN PROOF'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {authOpen && (
         <div className="auth-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeAuth() }}>
           <section className="auth-card auth-card--modern" role="dialog" aria-modal="true" aria-labelledby="auth-title">
@@ -793,29 +1103,40 @@ function App() {
 
             {!authSent ? (
               <>
-                <p className="section-kicker">YOUR PERCEPTION ACCOUNT</p>
-                <h2 id="auth-title">Continue your Project World.</h2>
-                <p>Choose the fastest secure way in. Your existing Perception history stays attached to the same verified account.</p>
-
-                <div className="auth-provider-stack">
-                  <button type="button" className="auth-provider" onClick={() => handleOAuthSignIn('google')} disabled={authBusy}>
-                    <span className="auth-provider-mark">G</span>
-                    <span>Continue with Google</span>
-                  </button>
-                  <button type="button" className="auth-provider" onClick={() => handleOAuthSignIn('apple')} disabled={authBusy}>
-                    <span className="auth-provider-mark">A</span>
-                    <span>Continue with Apple</span>
-                  </button>
-                  <button type="button" className="auth-provider" onClick={handlePasskeySignIn} disabled={authBusy}>
-                    <KeyRound size={16} />
-                    <span>Use a passkey</span>
-                  </button>
-                </div>
-
-                <div className="auth-divider"><span>or use email</span></div>
+                <p className="section-kicker">{authMode === 'signup' ? 'SAVE YOUR PERCEPTION' : 'YOUR PERCEPTION ACCOUNT'}</p>
+                <h2 id="auth-title">{authMode === 'signup' ? 'Keep your work across devices.' : 'Continue your Project World.'}</h2>
+                <p>{authMode === 'signup' ? 'Create an account to keep your Project World available across sessions and devices.' : 'Use the sign-in method attached to your Perception account.'}</p>
 
                 {authMode !== 'magic' ? (
                   <>
+                    {(authCapabilities.passkey || authCapabilities.google || authCapabilities.apple) && (
+                      <>
+                        <div className="auth-provider-stack" aria-label="Available sign-in methods">
+                          {authCapabilities.passkey && (
+                            <button className="auth-provider" type="button" onClick={handlePasskeySignIn} disabled={authBusy}>
+                              <KeyRound size={17} />
+                              <span>{authBusy ? 'WORKING…' : 'CONTINUE WITH PASSKEY'}</span>
+                              <span aria-hidden="true" />
+                            </button>
+                          )}
+                          {authCapabilities.google && (
+                            <button className="auth-provider" type="button" onClick={() => handleOAuthSignIn('google')} disabled={authBusy}>
+                              <span className="auth-provider-mark" aria-hidden="true">G</span>
+                              <span>CONTINUE WITH GOOGLE</span>
+                              <span aria-hidden="true" />
+                            </button>
+                          )}
+                          {authCapabilities.apple && (
+                            <button className="auth-provider" type="button" onClick={() => handleOAuthSignIn('apple')} disabled={authBusy}>
+                              <span className="auth-provider-mark" aria-hidden="true">A</span>
+                              <span>CONTINUE WITH APPLE</span>
+                              <span aria-hidden="true" />
+                            </button>
+                          )}
+                        </div>
+                        <div className="auth-divider">OR CONTINUE WITH EMAIL</div>
+                      </>
+                    )}
                     <div className="auth-mode-switch" role="tablist" aria-label="Email authentication mode">
                       <button type="button" className={authMode === 'signin' ? 'auth-mode-tab auth-mode-tab--active' : 'auth-mode-tab'} onClick={() => setAuthMode('signin')}>SIGN IN</button>
                       <button type="button" className={authMode === 'signup' ? 'auth-mode-tab auth-mode-tab--active' : 'auth-mode-tab'} onClick={() => setAuthMode('signup')}>CREATE ACCOUNT</button>
@@ -823,6 +1144,7 @@ function App() {
                     <form onSubmit={handlePasswordAuth} className="auth-password-form">
                       <input
                         type="email"
+                        name="email"
                         value={email}
                         onChange={(event) => setEmail(event.target.value)}
                         placeholder="Email address"
@@ -831,6 +1153,7 @@ function App() {
                       />
                       <input
                         type="password"
+                        name="password"
                         value={password}
                         onChange={(event) => setPassword(event.target.value)}
                         placeholder={authMode === 'signup' ? 'Create a password' : 'Password'}
@@ -838,7 +1161,7 @@ function App() {
                         minLength={8}
                         required
                       />
-                      <button type="submit" disabled={authBusy || !email.trim() || password.length < 8}>
+                      <button type="submit" disabled={authBusy}>
                         {authBusy ? 'WORKING…' : authMode === 'signup' ? 'CREATE ACCOUNT' : 'SIGN IN'}
                       </button>
                     </form>
@@ -871,7 +1194,7 @@ function App() {
             )}
 
             {error && <p className="auth-error" role="alert">{error}</p>}
-            <small>Google and Apple identities with the same verified email are automatically linked by Supabase Auth. Passkeys require one-time enrollment after an account is confirmed.</small>
+            <small>Email/password is active now. If you do not have a password yet, request a fresh email sign-in link.</small>
           </section>
         </div>
       )}

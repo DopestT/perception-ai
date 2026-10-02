@@ -415,4 +415,406 @@ where route_id = :'continuation_route_id'::uuid
   \quit 1
 \endif
 
-\echo 'PASS: Runtime v0.2 database safety gate'
+
+select public.perception_apply_dynamic_route_internal(
+  :'user1'::uuid,
+  :'continuation_project_id'::uuid,
+  :'continuation_objective_id'::uuid,
+  :'continuation_route_id'::uuid,
+  jsonb_build_object(
+    'reason', 'Runtime v0.3 Project World derived route',
+    'source', 'project_world_dynamic_v0_3',
+    'gaps', jsonb_build_array(
+      jsonb_build_object('key','unknown-1','kind','unknown','statement','Inspect current external state'),
+      jsonb_build_object('key','deliverable-1','kind','deliverable','statement','Create verified continuation artifact')
+    ),
+    'worldBlockers', '[]'::jsonb,
+    'blockedCapabilities', '[]'::jsonb,
+    'nodes', jsonb_build_array(
+      jsonb_build_object(
+        'key','resolve-unknown-1',
+        'label','Resolve material unknown',
+        'outcome','Inspect current external state',
+        'capability','research',
+        'permissionLevel','P0',
+        'confidence',0.9,
+        'risk','low',
+        'dependencies','[]'::jsonb,
+        'completionTests',jsonb_build_array(jsonb_build_object('description','Fresh evidence exists','kind','source'))
+      ),
+      jsonb_build_object(
+        'key','advance-deliverable-1',
+        'label','Create deliverable 1',
+        'outcome','Create verified continuation artifact',
+        'capability','generate',
+        'permissionLevel','P1',
+        'confidence',0.88,
+        'risk','low',
+        'dependencies',jsonb_build_array('resolve-unknown-1'),
+        'completionTests',jsonb_build_array(jsonb_build_object('description','Artifact exists','kind','deterministic'))
+      ),
+      jsonb_build_object(
+        'key','verify-deliverable-1',
+        'label','Verify deliverable 1',
+        'outcome','Evidence independently verifies the deliverable',
+        'capability','verify',
+        'permissionLevel','P0',
+        'confidence',0.97,
+        'risk','low',
+        'dependencies',jsonb_build_array('advance-deliverable-1'),
+        'completionTests',jsonb_build_array(jsonb_build_object('description','Evidence is inspectable','kind','deterministic'))
+      )
+    )
+  )
+);
+
+select id as dynamic_route_id, active as dynamic_route_active, version as dynamic_route_version, supersedes_route_id as dynamic_supersedes
+from public.perception_routes
+where objective_id = :'continuation_objective_id'::uuid
+order by version desc
+limit 1
+\gset
+
+select (:'dynamic_route_version'::integer = 3) as dynamic_version_ok
+\gset
+\if :dynamic_version_ok
+\else
+  \echo 'FAIL: dynamic Project World route did not advance to version 3'
+  \quit 1
+\endif
+
+\if :dynamic_route_active
+\else
+  \echo 'FAIL: dynamic Project World route is not active'
+  \quit 1
+\endif
+
+select (:'dynamic_supersedes'::uuid = :'continuation_route_id'::uuid) as dynamic_supersession_ok
+\gset
+\if :dynamic_supersession_ok
+\else
+  \echo 'FAIL: dynamic route does not supersede the prior active route'
+  \quit 1
+\endif
+
+select (count(*) = 3) as dynamic_node_count_ok
+from public.perception_route_nodes
+where route_id = :'dynamic_route_id'::uuid
+\gset
+\if :dynamic_node_count_ok
+\else
+  \echo 'FAIL: dynamic route node count is incorrect'
+  \quit 1
+\endif
+
+select (count(*) = 2) as dynamic_dependency_count_ok
+from public.perception_route_dependencies d
+join public.perception_route_nodes n on n.id = d.route_node_id
+where n.route_id = :'dynamic_route_id'::uuid
+\gset
+\if :dynamic_dependency_count_ok
+\else
+  \echo 'FAIL: dynamic route dependencies were not persisted'
+  \quit 1
+\endif
+
+select (count(*) = 1) as reality_mapped_event_ok
+from public.perception_model_events
+where project_id = :'continuation_project_id'::uuid
+  and event_type = 'reality.mapped'
+  and payload->>'route_id' = :'dynamic_route_id'
+\gset
+\if :reality_mapped_event_ok
+\else
+  \echo 'FAIL: dynamic route did not record reality.mapped provenance'
+  \quit 1
+\endif
+
+
+insert into public.perception_route_nodes(
+  user_id, project_id, route_id, label, outcome, status, capability,
+  permission_level, confidence, risk, completion_tests, sort_order
+) values (
+  :'user1'::uuid, :'continuation_project_id'::uuid, :'dynamic_route_id'::uuid,
+  'Local bounded deliverable', 'Verified local runtime artifact exists.', 'running', 'generate',
+  'P1', 0.9, 'low',
+  jsonb_build_array(jsonb_build_object('description','Artifact content is inspectable','kind','deterministic')),
+  50
+)
+returning id as local_node_id
+\gset
+
+insert into public.perception_worker_runs(
+  user_id, project_id, route_node_id, worker_key, capability, permission_level,
+  status, input, started_at
+) values (
+  :'user1'::uuid, :'continuation_project_id'::uuid, :'local_node_id'::uuid,
+  'local_generate_worker_v1', 'generate', 'P1', 'running',
+  jsonb_build_object('runtime','v0.4'), now()
+)
+returning id as local_worker_id
+\gset
+
+insert into public.perception_artifacts(
+  user_id, project_id, objective_id, route_node_id,
+  artifact_type, title, content, metadata
+) values (
+  :'user1'::uuid, :'continuation_project_id'::uuid, :'continuation_objective_id'::uuid, :'local_node_id'::uuid,
+  'dynamic_local_artifact',
+  'Verified local runtime artifact exists.',
+  'This is a bounded P1 artifact created only for the isolated database gate. It is intentionally long enough to represent a useful persisted draft and has no external effect.',
+  jsonb_build_object('runtime','local_generate_worker_v1')
+)
+returning id as local_artifact_id
+\gset
+
+insert into public.perception_verification_runs(
+  user_id, project_id, route_node_id, worker_run_id,
+  passed, evidence, details
+) values (
+  :'user1'::uuid, :'continuation_project_id'::uuid, :'local_node_id'::uuid, :'local_worker_id'::uuid,
+  true,
+  jsonb_build_array(jsonb_build_object('kind','local_runtime_v04_gate','result','pass')),
+  jsonb_build_object('kind','local_artifact_verification_v1')
+)
+returning id as local_verification_id
+\gset
+
+select (
+  array_agg(phase order by created_at, id)
+  = array['intended','authorized','attempted','observed','verified']::text[]
+) as local_execution_chain_ok
+from public.perception_execution_ledger
+where worker_run_id = :'local_worker_id'::uuid
+\gset
+\if :local_execution_chain_ok
+\else
+  \echo 'FAIL: local P1 worker did not produce intended -> authorized -> attempted -> observed -> verified'
+  \quit 1
+\endif
+
+select public.perception_apply_verified_local_effect_internal(
+  :'user1'::uuid,
+  :'continuation_project_id'::uuid,
+  :'continuation_objective_id'::uuid,
+  :'local_node_id'::uuid,
+  :'local_worker_id'::uuid,
+  :'local_artifact_id'::uuid,
+  'Verified bounded artifact created for: Verified local runtime artifact exists.',
+  jsonb_build_array(jsonb_build_object('kind','local_runtime_v04_gate','result','pass'))
+);
+
+select (
+  p.current_reality = 'Verified bounded artifact created for: Verified local runtime artifact exists.'
+) as local_project_world_advanced
+from public.perception_projects p
+where p.id = :'continuation_project_id'::uuid
+\gset
+\if :local_project_world_advanced
+\else
+  \echo 'FAIL: verified local P1 effect did not advance Project World'
+  \quit 1
+\endif
+
+select (count(*) = 1) as local_epistemic_claim_ok
+from public.perception_epistemic_ledger
+where project_id = :'continuation_project_id'::uuid
+  and claim_key = 'local.verified.' || :'local_worker_id'
+  and state = 'observed'
+\gset
+\if :local_epistemic_claim_ok
+\else
+  \echo 'FAIL: verified local effect did not create observed epistemic evidence'
+  \quit 1
+\endif
+
+select (
+  has_function_privilege('service_role', 'public.perception_apply_verified_local_effect_internal(uuid,uuid,uuid,uuid,uuid,uuid,text,jsonb)', 'execute')
+  and not has_function_privilege('authenticated', 'public.perception_apply_verified_local_effect_internal(uuid,uuid,uuid,uuid,uuid,uuid,text,jsonb)', 'execute')
+  and not has_function_privilege('anon', 'public.perception_apply_verified_local_effect_internal(uuid,uuid,uuid,uuid,uuid,uuid,text,jsonb)', 'execute')
+) as local_truth_bridge_privileges_ok
+\gset
+\if :local_truth_bridge_privileges_ok
+\else
+  \echo 'FAIL: local truth bridge RPC permissions are not service-only'
+  \quit 1
+\endif
+
+insert into public.perception_route_nodes(
+  user_id, project_id, route_id, label, outcome, status, capability,
+  permission_level, confidence, risk, completion_tests, sort_order
+) values (
+  :'user1'::uuid, :'continuation_project_id'::uuid, :'dynamic_route_id'::uuid,
+  'Runtime v0.5 leased deliverable',
+  'Runtime v0.5 produces exactly one leased logical worker at a time.',
+  'ready', 'generate', 'P1', 0.95, 'low',
+  jsonb_build_array(jsonb_build_object('description','Lease and retry behavior is deterministic','kind','deterministic')),
+  60
+)
+returning id as v05_node_id
+\gset
+
+with claimed as (
+  select public.perception_claim_local_node_internal(
+    :'user1'::uuid,
+    :'continuation_project_id'::uuid,
+    :'continuation_objective_id'::uuid,
+    :'dynamic_route_id'::uuid,
+    :'v05_node_id'::uuid,
+    'local_generate_worker_v1',
+    jsonb_build_object('runtime','v0.5','phase','first_claim'),
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'::uuid,
+    600,
+    3
+  ) as result
+)
+select
+  (result->>'claimed')::boolean as v05_first_claimed,
+  result->>'worker_run_id' as v05_first_worker_id,
+  (result->>'attempt')::integer as v05_first_attempt,
+  result->>'idempotency_key' as v05_idempotency_key
+from claimed
+\gset
+
+\if :v05_first_claimed
+\else
+  \echo 'FAIL: Runtime v0.5 did not claim the first eligible local worker'
+  \quit 1
+\endif
+
+select (:'v05_first_attempt'::integer = 1) as v05_first_attempt_ok
+\gset
+\if :v05_first_attempt_ok
+\else
+  \echo 'FAIL: Runtime v0.5 first claim did not start at attempt 1'
+  \quit 1
+\endif
+
+with duplicate_claim as (
+  select public.perception_claim_local_node_internal(
+    :'user1'::uuid,
+    :'continuation_project_id'::uuid,
+    :'continuation_objective_id'::uuid,
+    :'dynamic_route_id'::uuid,
+    :'v05_node_id'::uuid,
+    'local_generate_worker_v1',
+    jsonb_build_object('runtime','v0.5','phase','duplicate_claim'),
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'::uuid,
+    600,
+    3
+  ) as result
+)
+select
+  not (result->>'claimed')::boolean as v05_duplicate_blocked,
+  result->>'reason' as v05_duplicate_reason,
+  result->>'worker_run_id' as v05_duplicate_worker_id
+from duplicate_claim
+\gset
+
+\if :v05_duplicate_blocked
+\else
+  \echo 'FAIL: Runtime v0.5 allowed a duplicate active logical worker'
+  \quit 1
+\endif
+
+select (
+  :'v05_duplicate_reason' = 'in_progress'
+  and :'v05_duplicate_worker_id' = :'v05_first_worker_id'
+) as v05_duplicate_reason_ok
+\gset
+\if :v05_duplicate_reason_ok
+\else
+  \echo 'FAIL: Runtime v0.5 duplicate claim did not reuse the active lease'
+  \quit 1
+\endif
+
+select (count(*) = 1) as v05_one_active_worker_ok
+from public.perception_worker_runs
+where idempotency_key = :'v05_idempotency_key'
+  and status in ('queued','running','succeeded')
+\gset
+\if :v05_one_active_worker_ok
+\else
+  \echo 'FAIL: Runtime v0.5 has more than one active worker for the same idempotency key'
+  \quit 1
+\endif
+
+select public.perception_fail_local_worker_internal(
+  :'v05_first_worker_id'::uuid,
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'::uuid,
+  'isolated_gate_failure',
+  'Intentional Runtime v0.5 isolated retry test.',
+  0
+);
+
+with retry_claim as (
+  select public.perception_claim_local_node_internal(
+    :'user1'::uuid,
+    :'continuation_project_id'::uuid,
+    :'continuation_objective_id'::uuid,
+    :'dynamic_route_id'::uuid,
+    :'v05_node_id'::uuid,
+    'local_generate_worker_v1',
+    jsonb_build_object('runtime','v0.5','phase','retry_claim'),
+    'cccccccc-cccc-4ccc-8ccc-cccccccccccc'::uuid,
+    600,
+    3
+  ) as result
+)
+select
+  (result->>'claimed')::boolean as v05_retry_claimed,
+  result->>'worker_run_id' as v05_retry_worker_id,
+  (result->>'attempt')::integer as v05_retry_attempt
+from retry_claim
+\gset
+
+\if :v05_retry_claimed
+\else
+  \echo 'FAIL: Runtime v0.5 did not permit a bounded retry after failure'
+  \quit 1
+\endif
+
+select (
+  :'v05_retry_attempt'::integer = 2
+  and :'v05_retry_worker_id' <> :'v05_first_worker_id'
+) as v05_retry_attempt_ok
+\gset
+\if :v05_retry_attempt_ok
+\else
+  \echo 'FAIL: Runtime v0.5 retry did not create attempt 2 with a new worker id'
+  \quit 1
+\endif
+
+select (
+  count(*) filter (where status = 'failed') = 1
+  and count(*) filter (where status = 'running') = 1
+) as v05_retry_state_ok
+from public.perception_worker_runs
+where idempotency_key = :'v05_idempotency_key'
+\gset
+\if :v05_retry_state_ok
+\else
+  \echo 'FAIL: Runtime v0.5 retry state is not one failed prior attempt plus one running lease'
+  \quit 1
+\endif
+
+select (
+  has_function_privilege('service_role', 'public.perception_claim_local_node_internal(uuid,uuid,uuid,uuid,uuid,text,jsonb,uuid,integer,integer)', 'execute')
+  and not has_function_privilege('authenticated', 'public.perception_claim_local_node_internal(uuid,uuid,uuid,uuid,uuid,text,jsonb,uuid,integer,integer)', 'execute')
+  and not has_function_privilege('anon', 'public.perception_claim_local_node_internal(uuid,uuid,uuid,uuid,uuid,text,jsonb,uuid,integer,integer)', 'execute')
+  and has_function_privilege('service_role', 'public.perception_fail_local_worker_internal(uuid,uuid,text,text,integer)', 'execute')
+  and not has_function_privilege('authenticated', 'public.perception_fail_local_worker_internal(uuid,uuid,text,text,integer)', 'execute')
+  and not has_function_privilege('anon', 'public.perception_fail_local_worker_internal(uuid,uuid,text,text,integer)', 'execute')
+  and has_function_privilege('service_role', 'public.perception_apply_verified_local_effect_leased_internal(uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,jsonb)', 'execute')
+  and not has_function_privilege('authenticated', 'public.perception_apply_verified_local_effect_leased_internal(uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,jsonb)', 'execute')
+  and not has_function_privilege('anon', 'public.perception_apply_verified_local_effect_leased_internal(uuid,uuid,uuid,uuid,uuid,uuid,uuid,text,jsonb)', 'execute')
+) as v05_internal_rpc_privileges_ok
+\gset
+\if :v05_internal_rpc_privileges_ok
+\else
+  \echo 'FAIL: Runtime v0.5 continuation RPC permissions are not service-only'
+  \quit 1
+\endif
+
+\echo 'PASS: Runtime v0.2 + v0.3 + v0.4 + v0.5 database safety gate'
+

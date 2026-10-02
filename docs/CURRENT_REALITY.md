@@ -1,15 +1,4 @@
-> **Audit update — 2026-09-26:** The historical baseline below is retained for provenance, but several claims are superseded by current evidence. Production `main` is `fb024c80b365c3f0fd48499e8d642ef53a3c3d1d` (PR #34) and Vercel reports that exact commit `READY` in production. Supabase project `zxmdfmiueapjhktqchts` is `ACTIVE_HEALTHY`. The live `perceive-objective` function had remained stale at v9 after PR #34; it was reconciled from unchanged current `main` and is now ACTIVE at **v10**, with its deployed `index.ts` exactly matching repository source and including Capability Router plus credit-aware model routing. A post-v10 authenticated objective has not yet been observed, so production functional E2E remains **NOT YET VERIFIED**. `github-operator` remains ACTIVE at v9 and enforces exact target-scoped permission lookup, bounded branch writes, independent GitHub comparison, Execution Ledger phases, and Project World update only after verified effect. Live permission state is **1 enabled Operator principal / 0 active permission grants**.
->
-> **Action-contract slice — PR #35:** Branch `perception/action-contract-resolver-v1` now adds the missing Capability Router → GitHub action-contract resolver. It resolves repository identity only from bound Project World GitHub sources, refuses ambiguous repositories, refuses to invent an unobserved base branch or exact file payload, generates a deterministic bounded working-branch/idempotency identity, constructs the exact permission target, blocks P3 downgrades, distinguishes `needs_input` from `awaiting_permission`, and records contract resolution into Execution Ledger intent details. GitHub CI run 133 passed **15 test files / 61 tests** plus the TypeScript/Vite production build; the Vercel preview for head `60a1060a6892bc6fdac4ab7df9e9c01f024718ed` is `READY`. This slice is **TESTED / PREVIEW DEPLOYED**, not merged or production-deployed.
->
-> **Current execution blocker is explicit, not hidden:** on 2026-09-26 the connected GitHub state was re-observed and appended through `perception_ingest_project_observation_internal`. The active primary source now carries `default_branch: main`, current observed head `fb024c80b365c3f0fd48499e8d642ef53a3c3d1d`, and a 60-minute freshness SLA. The action-contract resolver therefore has fresh repository/base-branch evidence, but a natural-language objective still does not yield an exact file payload. The remaining resolver blocker is the bounded file-change payload; it must be generated or supplied as a P1 artifact from inspected repository context rather than invented. Once that exists, a complete contract should transition to `awaiting_permission` while the live grant count remains zero.
->
->
-> **Continuous Mind / adaptation provenance drift:** Supabase currently has `continuous-mind` ACTIVE at v8, but no matching `supabase/functions/continuous-mind` source path is discoverable on current `main`. The live function performs approved-source study/observation work and uses a scheduler credential, but until source provenance is reconciled it should not be treated as part of the canonical deployable production path. The live database also contains legacy verified-signal route-adaptation RPCs whose applied migration names are present in Supabase but not discoverable in current `main`. Those RPCs are **not executable by anon or authenticated roles** (service-role only), but one legacy path can directly append a supplied verified-signal summary to Project World current reality. Treat it as legacy/non-canonical until reconciled with the v0.2 ledger/verification invariants; do not widen its privileges.
-
-> **Security reality:** the 2026-09-26 Supabase advisor is not clean. The shared project reports current warnings/info including SECURITY DEFINER exposure and RLS-enabled tables without policies; one Perception-specific informational finding is `perception_operator_principals` with RLS enabled and no policy, while its migration also revokes table access from public/anon/authenticated. Review Perception findings individually before changing privileges because this Supabase project is shared with other applications.
-
-> **Audit update — 2026-09-23:** This original 2026-09-06/07 baseline is retained as historical evidence. Since then, main has added token-efficiency controls, a substantial FORECAST subsystem, a microsite engine/operator, Vercel Analytics, and additional production-oriented schema. The latest main commit has a successful Vercel commit status, but real-user browser/mobile E2E remains unverified from this environment. Runtime v0.2 work is now restoring architectural focus around explicit Epistemic and Execution Ledgers. A product-taxonomy drift is also present: the frontend currently exposes FORECAST as a fourth top-level mode although the intended front door is DISCOVER / PERCEIVE / SEARCH; specialized forecast behavior should be routed beneath those modes rather than silently expanding the primary taxonomy.
+> **Audit update — 2026-09-28:** Runtime v0.5 Reliable Continuation is merged and live. PR #50 passed Perception CI, the isolated Postgres truth/security gate (including duplicate-claim suppression and bounded retry assertions), and Vercel preview, then merged to `main` at `8cc47cb21551fb43193804bc61b1f0997ef63d1c`. Production Vercel is READY on that commit at `www.perceptionai.io` / `perceptionai.io`; migration `runtime_v05_reliable_continuation` is applied in canonical Supabase and `perceive-objective` is ACTIVE at version **17**. Existing objectives can now be explicitly resumed without creating a duplicate objective, the current route is reused first, eligible P0/P1 local generation nodes are atomically claimed with logical idempotency and expiring leases, concurrent duplicate claims become safe no-ops, failed/expired attempts enter an explicit bounded retry policy, and verified local effects require the active lease before Project World can advance. The production UI exposes **CONTINUE ROUTE** as an explicit user action rather than silently executing work on login. The next runtime proof gap is authenticated real-user resume/retry E2E across a return-later session; broader event-driven continuation, external-worker leases, and richer recovery policies remain.
 
 # Perception — Current Reality
 
@@ -35,8 +24,9 @@ The older Perception backend references are superseded. The current repository a
   - `perception_verified_vertical_slice`
   - `perception_runtime_api_hardening`
   - `perception_worker_artifact_index`
-- Active Edge Function: `perceive-objective`, version 1.
-- Supabase security advisor after hardening: **0 findings**.
+  - `runtime_v05_reliable_continuation`
+- Active execution Edge Functions: `perceive-objective` version **17** and `github-operator` version **11**.
+- Historical 2026-09-07 security-advisor state was **0 findings**. Current 2026-09-28 advisor output is **not clean** because of older unrelated tables/functions; none of the three new Runtime v0.5 internal RPCs are flagged as publicly/authenticated executable.
 - Performance advisor: no actionable warning; only an expected unused-index informational item on the new empty production dataset.
 - Backend vertical self-test: **PASS**.
 - Temporary test user and all cascaded test data were removed after verification.
@@ -86,47 +76,47 @@ The test deliberately did **not** mark the broader objective realized.
 | --- | --- | --- |
 | Repository / mainline | WORKING BUT INCOMPLETE | Runtime contracts, durable schema, Edge Function source, frontend integration, tests, and docs are on `main`. |
 | CI / production build | WORKING BUT INCOMPLETE | PR #3 passed tests and TypeScript/Vite production build. Browser E2E is not yet automated. |
-| Frontend | WORKING BUT INCOMPLETE | React UI is now Supabase-backed, session-aware, submits through the Edge Function, and reloads durable Project World. Live-browser verification remains. |
+| Frontend | WORKING BUT INCOMPLETE | React UI is Supabase-backed, session-aware, submits through the Edge Function, reloads durable Project World, and exposes explicit `CONTINUE ROUTE` for an existing objective. Authenticated real-user resume E2E remains. |
 | Mobile experience | PARTIAL | Responsive UI exists; no real-device production E2E evidence yet. |
 | Objective Intake | WORKING BUT INCOMPLETE | Authenticated text objective path is implemented. Voice/image/file/link intake remains unimplemented. |
 | Meaning Resolver | PARTIAL | Direct user intent is preserved as observed evidence. General provider-backed semantic resolution, contradiction handling, and structured uncertainty remain incomplete. |
-| Project World | WORKING BUT INCOMPLETE | Durable authenticated projects, beliefs, objectives, events, routes, workers, artifacts, and verification are live in canonical Supabase. Real-user return-later browser proof is still required. |
-| Reality Mapper | PARTIAL | First bounded reality gap is represented. General dependency/gap decomposition is not yet implemented. |
-| Route Planner | WORKING BUT INCOMPLETE | Versioned deterministic three-node first route is live. Dynamic route generation, optimization, and replanning are not. |
-| Capability Router | PARTIAL | `reason`, `generate`, and `verify` are routed with capability/permission metadata. General adapter selection is not live. |
-| Portable Workers | PARTIAL | `first_action_brief_worker` is a real persisted bounded worker run. External/provider workers are not yet connected. |
-| Execution Runtime | WORKING BUT INCOMPLETE | Worker start → artifact → verification → evidence-backed Project World update works. Retries, leases, idempotency, distributed execution, and failure recovery remain. |
-| Permission Gate | PARTIAL | P0/P1 are bounded in the first slice; P2/P3 schema/contracts exist. Durable approval UX and consequential-action enforcement across real adapters remain. |
-| Verification Engine | WORKING BUT INCOMPLETE | Deterministic first-artifact verification is persisted and gates truth updates. External/source/UI verification adapters remain. |
-| Adaptation | MISSING | No automatic route-change proposal/replan after failure or changing reality. |
+| Project World | WORKING BUT INCOMPLETE | Durable authenticated projects, beliefs, objectives, events, routes, workers, artifacts, and verification are live in canonical Supabase. Runtime v0.5 can resume the latest owned objective/project without creating a replacement objective; real-user return-later browser proof is still required. |
+| Reality Mapper | WORKING BUT INCOMPLETE | Runtime v0.3 maps unresolved unknowns, requested deliverables, verified evidence, and existing blockers after the first verified Project World state. Richer semantic dependency inference, contradiction-driven remapping, and cross-source freshness scoring remain. |
+| Route Planner | WORKING BUT INCOMPLETE | Runtime v0.3 derives and persists dependency-aware continuation routes; v0.4 performs one bounded re-map/re-plan after local execution; v0.5 resumes by reusing the current active route first instead of superseding it preemptively. Event-driven replanning for external changes remains. |
+| Capability Router | WORKING BUT INCOMPLETE | `reason`, `generate`, and `verify` route locally; bounded P2 `code` routes select `github-operator`, while P3 production deployment remains blocked. Code routes now emit a concrete action-contract shell rather than stopping at adapter selection. |
+| Portable Workers | WORKING BUT INCOMPLETE | `first_action_brief_worker`, `local_generate_worker_v1`, and `github_code_plan_materializer_v1` are real persisted bounded workers. Runtime v0.5 gives local generation logical idempotency, lease ownership, and bounded attempts; GitHub planning remains P1/read-only and does not yet use the lease contract. More provider workers remain. |
+| Execution Runtime | WORKING BUT INCOMPLETE | Ready bounded P0/P1 generate nodes execute through persisted workers, artifacts, verification, the verified-ledger gate, and Project World updates. Runtime v0.5 adds database-authoritative claims, expiring leases, logical duplicate suppression, explicit retry timing, bounded attempts, and cross-request resume. External-worker leasing, richer recovery classes, and scheduled/event-driven continuation remain. |
+| Permission Gate | WORKING BUT INCOMPLETE | GitHub P2 execution requires an active scoped grant matching user, project, `code`, and exact repository/base target. Durable approval UX now restores pending reviews from the Execution Ledger, distinguishes NOT NOW from DENY, records denials append-only, and keeps temporary grants explicit. General P2 adapters and P3 execution remain. |
+| Verification Engine | WORKING BUT INCOMPLETE | First-action and dynamic local-artifact verification are persisted and gate truth updates. The local truth bridge requires both a passing verification and a matching verified Execution Ledger phase. External/source/UI verification adapters remain. |
+| Adaptation | WORKING BUT INCOMPLETE | After local execution success or failure, Runtime v0.4 refreshes Project World evidence and performs one bounded re-map/re-plan pass, preserving route history. Runtime v0.5 adds explicit cross-request resume of the existing Project World/route. Automatic event-driven continuation for contradiction, staleness, or changed external reality remains. |
 | Realization | PARTIAL | Objective remains correctly `running` after first verified progress. General success-criteria realization is not implemented. |
 | Learning | MISSING | No verified-result learning loop yet. |
 | Continuous Perception | PLACEHOLDER | World-signal schema/scoring exists, but watcher/ingestion runtime is not active. |
 | Database / RLS | WORKING BUT INCOMPLETE | Canonical schema is applied, owner reads are RLS-protected, direct client truth mutation is revoked, security advisor is clean. More production load/retention testing remains. |
 | Authentication | WORKING BUT INCOMPLETE | Supabase session restoration and email magic-link UI are implemented. A real production user session has not yet been browser-verified. |
-| APIs | WORKING BUT INCOMPLETE | `perceive-objective` Edge Function is ACTIVE; Project World read RPC is RLS-scoped. General runtime APIs remain. |
-| External integrations | MISSING | No real external capability provider is yet routed through the production runtime. |
+| APIs | WORKING BUT INCOMPLETE | `perceive-objective` v16 and `github-operator` v11 are ACTIVE. Objective responses include reality mapping, route plans, local execution/adaptation evidence, and action contracts; both local and GitHub paths apply only verified effects to Project World. |
+| External integrations | WORKING BUT INCOMPLETE | GitHub is now connected across read-only P1 planning and scoped P2 execution: Project World resolves the bound repository, the P1 materializer produces verified file contents/tests, the action contract carries that exact scope, and the operator can execute and independently verify bounded branch changes. Real-user end-to-end proof and broader providers remain. |
 | Observability | PARTIAL | DB audit events, GitHub CI, Supabase advisors, and worker/verification persistence exist. Runtime traces/alerts/metrics are incomplete. |
 | Analytics | MISSING | No product funnel or runtime analytics pipeline yet. |
 | Production deployment | WORKING BUT INCOMPLETE | GitHub/Vercel integration exists. Direct connector visibility is restricted; production browser + mobile verification is the immediate gate. |
 
 ## Immediate ranked production queue
 
-1. **Real-user browser E2E** — authenticate, submit an objective, observe all seven stages, reload/return, and prove Project World restoration from canonical Supabase.
-2. **Provider-backed Meaning Resolver** — convert natural-language intent into structured objective semantics with provenance, confidence, explicit unknowns, and contradiction detection.
-3. **One real capability adapter end-to-end** — route a useful external P0/P1 action through portable worker → evidence → independent verification → Project World.
-4. **General Reality Mapper + dynamic Route Planner** — replace the fixed proof route with dependency-aware, versioned routes generated from trusted Project World state.
-5. **Durable permission grants + approval UX** — enforce P2/P3 scope by project, capability, target, duration, and explicit authorization.
-6. **Runtime reliability** — idempotency, retries, worker leases/timeouts, resumability, duplicate suppression, and failure/adaptation paths.
-7. **Browser/mobile automated E2E** — auth, objective intake, route creation, execution, verification, persistence restoration, and permission denial.
-8. **Runtime observability + analytics** — stage latency, worker outcomes, verification pass/fail, blockers, retries, route revisions, and conversion to realization.
-9. **Adaptation → Continuous Perception → Learning** — build only on verified durable truth and versioned routes.
+1. **Real-user contract-path Operator proof** — from the production UI, submit the bounded proof objective and prove P1 repository inspection → verified code-plan artifact → exact action contract → temporary scoped grant → dry run → GitHub execution → independent observation → verification → Project World update → grant revocation.
+2. **Durable approval UX** — present exact repository target, base/working branch, planned files, proposed changes, tests, rollback, permission level, and duration before P2/P3 authorization; preserve explicit denial, expiry, and revocation.
+3. **General Reality Mapper + dynamic Route Planner** — replace fixed proof-oriented continuation behavior with dependency-aware, versioned routes generated from trusted Project World state.
+4. **Runtime continuation + reliability** — resume an existing Project World, add worker leases/timeouts/idempotency, duplicate suppression, explicit retry policy, dead-letter/failure recovery, and safe continuation across requests.
+5. **Browser/mobile automated E2E** — auth, objective intake, code-plan materialization, permission denial/approval, execution, verification, persistence restoration, and return-later behavior.
+6. **Security hardening pass** — resolve current Supabase advisor findings, especially externally executable SECURITY DEFINER functions and leaked-password protection.
+7. **More capability adapters** — extend the same contract/permission/verification pattern to research, retrieve, edit, communicate, and schedule providers without letting workers own shared truth.
+8. **Runtime observability + analytics** — stage latency, materializer confidence/scope, contract state, approvals, worker outcomes, verification pass/fail, blockers, retries, route revisions, and realization.
+9. **Continuous Perception → Learning** — trigger future remaps from verified world signals, contradictions, and staleness; learn only from verified durable outcomes and explicit corrections.
 
 ## Current production gate
 
-The backend target is no longer blocked: the canonical Supabase vertical slice is live and verified.
+The bounded GitHub path now includes both **P1 planning** and **P2 execution**: repository inspection, code-plan materialization, action-contract creation, scoped permission enforcement, branch-only mutation, independent observation, verification, and Project World effect application are implemented.
 
-The immediate gate is now **real-user production browser verification**. Definition of done for this gate is:
+The immediate engineering gate is the **real-user production proof of the full contract path**, followed by durable approval UX. Definition of done for the user-visible proof is:
 
 1. A real authenticated user enters an objective.
 2. The production UI calls `perceive-objective`.
@@ -134,3 +124,10 @@ The immediate gate is now **real-user production browser verification**. Definit
 4. The UI shows all seven stages as complete only after verification.
 5. The user reloads or returns later.
 6. The same verified Project World is restored from Supabase rather than localStorage.
+
+## Runtime v0.8 — Anticipatory Retrieval
+
+Perception now prepares owner-scoped context while an authenticated user types. The Intent Shadow path is debounced and cancellable, persists no provisional keystrokes, searches only the user's Project World and fresh Scenario Forge memory, and hands only short-lived scenario identifiers to the objective runtime. Final submitted text remains authoritative, and every reused scenario is revalidated for ownership, freshness, expiry, confidence, and `must_revalidate` before it can influence routing.
+
+Production database migration 034 and `perceive-objective` Edge Function v19 are live. GitHub CI and the authenticated-role database gate passed for PR #57.
+
