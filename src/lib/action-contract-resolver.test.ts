@@ -40,6 +40,7 @@ const primarySource = {
 }
 
 const files = [{ path: 'docs/SAFE_PROOF.md', content: '# Safe proof\n' }]
+const freshNow = new Date('2026-09-26T13:00:00Z')
 
 describe('Action Contract Resolver', () => {
   it('resolves a bounded GitHub contract from observed Project World source context', () => {
@@ -52,6 +53,7 @@ describe('Action Contract Resolver', () => {
       sources: [primarySource],
       files,
       permissionGranted: true,
+      now: freshNow,
     })
 
     expect(result.status).toBe('ready')
@@ -147,6 +149,7 @@ describe('Action Contract Resolver', () => {
       sources: [primarySource],
       files,
       permissionGranted: false,
+      now: freshNow,
     })
 
     expect(result.status).toBe('awaiting_permission')
