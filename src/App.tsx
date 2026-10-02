@@ -22,7 +22,6 @@ import {
   resumeObjective,
   signInWithOAuthProvider,
   signInWithPasskey,
-  startGuestSession,
   signInWithPassword,
   signUpWithPassword,
   runAutonomousForecast,
@@ -183,7 +182,6 @@ function App() {
     experienceMode === 'forecast'
       ? forecastExperience
       : experienceModes.find((mode) => mode.id === experienceMode) ?? experienceModes[1]
-  const isGuest = Boolean(session?.user?.is_anonymous)
 
   const loadLatestWorld = useCallback(async () => {
     const [latest, pendingApproval] = await Promise.all([
@@ -454,19 +452,8 @@ function App() {
 
     if (!session) {
       savePendingObjective(statement, experienceMode, experienceMode === 'forecast' ? forecastDeadline : undefined)
-      setPortalMode('charging')
       setError('')
-
-      try {
-        const guestSession = await startGuestSession()
-        setSession(guestSession)
-        if (experienceMode === 'forecast') await processForecast(statement, forecastDeadline)
-        else await processObjective(statement)
-        return
-      } catch {
-        // Guest auth may be disabled or temporarily unavailable. Fall back to permanent account creation.
-      }
-
+      setNotice('Sign in once to execute this objective and keep its Project World.')
       setAuthMode('signup')
       setPortalMode('auth')
       setAuthOpen(true)
@@ -821,23 +808,16 @@ function App() {
           <span>PERCEPTION</span>
         </button>
         {session ? (
-          isGuest ? (
-            <div className="account-actions">
-              <span className="guest-session-pill">TRY MODE</span>
-              <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth' })}>PROJECT WORLD</button>
-            </div>
-          ) : (
-            <div className="account-actions">
-              <button className="quiet-action" type="button" onClick={handlePrepareOperatorProof} disabled={runningOperatorTest || busy}>
-                {runningOperatorTest ? 'PREPARING…' : 'PREPARE OPERATOR PROOF'}
-              </button>
-              <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth' })}>PROJECT WORLD</button>
-              <button className="quiet-action" type="button" onClick={handleRegisterPasskey} disabled={registeringPasskey}>
-                {registeringPasskey ? 'ADDING PASSKEY…' : 'ENABLE PASSKEY'}
-              </button>
-              <button className="icon-action" type="button" onClick={logout} aria-label="Sign out"><LogOut size={15} /></button>
-            </div>
-          )
+          <div className="account-actions">
+            <button className="quiet-action" type="button" onClick={handlePrepareOperatorProof} disabled={runningOperatorTest || busy}>
+              {runningOperatorTest ? 'PREPARING…' : 'PREPARE OPERATOR PROOF'}
+            </button>
+            <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth' })}>PROJECT WORLD</button>
+            <button className="quiet-action" type="button" onClick={handleRegisterPasskey} disabled={registeringPasskey}>
+              {registeringPasskey ? 'ADDING PASSKEY…' : 'ENABLE PASSKEY'}
+            </button>
+            <button className="icon-action" type="button" onClick={logout} aria-label="Sign out"><LogOut size={15} /></button>
+          </div>
         ) : (
           <button className="sign-in-link" type="button" onClick={() => { setPortalMode('auth'); setAuthOpen(true) }}>SIGN IN</button>
         )}
@@ -899,7 +879,6 @@ function App() {
               </div>
             )}
             <p className="track-line">SEE <span>•</span> HEAR <span>•</span> UNDERSTAND <span>•</span> BUILD</p>
-            {isGuest && <p className="guest-session-note">TRY MODE · NO SIGN-UP REQUIRED · THIS BROWSER REMEMBERS YOUR WORK</p>}
             {notice && <p className="hero-notice" role="status"><Check size={14} /> {notice}</p>}
             {error && !authOpen && <p className="hero-error" role="alert">{error}</p>}
           </div>
@@ -973,7 +952,7 @@ function App() {
             </div>
           )}
 
-          {!isGuest && <GrowthOperatorPanel projectId={world.project.id} />}
+<GrowthOperatorPanel projectId={world.project.id} />
 
           <div className="world-grid">
             <article className="world-card world-card--wide">
