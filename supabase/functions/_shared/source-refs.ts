@@ -61,15 +61,22 @@ export function normalizeSourceRefs(value: unknown, limit = 12): BoundedSourceRe
 }
 
 export function mergeSourceRefs(existing: unknown, incoming: BoundedSourceRef[], limit = 24): BoundedSourceRef[] {
+  const preservedExisting: BoundedSourceRef[] = Array.isArray(existing)
+    ? existing
+        .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item)))
+        .filter((item) => typeof item.kind === 'string' && typeof item.ref === 'string')
+        .map((item) => ({ ...item }) as BoundedSourceRef)
+    : []
+
   const merged = [
-    ...normalizeSourceRefs(existing, limit),
+    ...preservedExisting,
     ...normalizeSourceRefs(incoming, limit),
   ]
 
   const unique: BoundedSourceRef[] = []
   const seen = new Set<string>()
   for (const ref of merged) {
-    const key = ref.kind + '|' + ref.ref
+    const key = String(ref.kind) + '|' + String(ref.ref)
     if (seen.has(key)) continue
     seen.add(key)
     unique.push(ref)
