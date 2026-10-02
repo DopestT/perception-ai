@@ -112,7 +112,7 @@ export async function executeBoundedGitHubChange(input: GitHubExecutionRequest, 
   const failures = validateGitHubExecutionRequest(input)
   if (failures.length) return { ok: false, phase: 'blocked', failures }
 
-  const baseBranch = input.base_branch
+  const baseBranch = input.base_branch!
   const [owner, repository] = input.repository.split('/')
   const api = `https://api.github.com/repos/${owner}/${repository}`
   const base = await githubJson(token, `${api}/git/ref/heads/${encodeURIComponent(baseBranch)}`)
