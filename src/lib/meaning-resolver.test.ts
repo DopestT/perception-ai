@@ -63,9 +63,9 @@ describe('Perception Meaning Resolver', () => {
 
 
   it('sends OpenAI meaning requests as non-persistent bounded copies', async () => {
-    let requestBody: Record<string, unknown> | null = null
+    const captured: { body?: Record<string, unknown> } = {}
     const fakeFetch: typeof fetch = async (_input, init) => {
-      requestBody = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+      captured.body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
       return new Response(JSON.stringify({
         output_text: JSON.stringify({
           desired_reality: 'A bounded result',
@@ -87,11 +87,11 @@ describe('Perception Meaning Resolver', () => {
       fetchImpl: fakeFetch,
     })
 
-    expect(requestBody?.store).toBe(false)
-    const input = requestBody?.input as Array<{ role: string; content: string }>
+    expect(captured.body?.store).toBe(false)
+    const input = captured.body?.input as Array<{ role: string; content: string }>
     expect(input[0]?.content).toContain('non-authoritative working copy')
-    expect(requestBody).not.toHaveProperty('conversation')
-    expect(requestBody).not.toHaveProperty('previous_response_id')
+    expect(captured.body).not.toHaveProperty('conversation')
+    expect(captured.body).not.toHaveProperty('previous_response_id')
   })
 
 
