@@ -7,6 +7,9 @@ import {
   sha256Hex,
   verifyDataCenterSignature,
 } from "../_shared/datacenter-forums-bridge.ts";
+import {
+  prepareDataCenterBenchmarkCase,
+} from "../_shared/datacenter-forums-evaluation-feedback.ts";
 
 const CLIENT_ID = "datacenter-forums";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -230,6 +233,47 @@ Deno.serve(async (req: Request) => {
     }
 
     const observationId = result?.observation_id ?? null;
+
+    if (event.eventType === "evaluation.requested") {
+      if (!observationId) {
+        await failReceipt("Benchmark observation id is unavailable");
+        return json({ error: "Benchmark observation unavailable" }, 500);
+      }
+
+      const benchmark = prepareDataCenterBenchmarkCase(event.observationPayload);
+      if (!benchmark.ok) {
+        await failReceipt(benchmark.error);
+        return json({ error: benchmark.error }, 400);
+      }
+
+      const { error: benchmarkInsertError } = await admin
+        .from("perception_external_evaluation_cases")
+        .upsert({
+          user_id: project.user_id,
+          project_id: configuredProjectId,
+          source_observation_id: observationId,
+          client_id: CLIENT_ID,
+          external_evaluation_id: benchmark.value.externalEvaluationId,
+          benchmark_hash: event.contentHash,
+          eval_type: benchmark.value.evalType,
+          case_key: benchmark.value.caseKey,
+          subject_type: benchmark.value.subjectType,
+          subject_key: benchmark.value.subjectKey,
+          benchmark: benchmark.value.benchmark,
+          status: "pending",
+          updated_at: new Date().toISOString(),
+        }, {
+          onConflict: "source_observation_id",
+          ignoreDuplicates: true,
+        });
+
+      if (benchmarkInsertError) {
+        await failReceipt(benchmarkInsertError.message);
+        console.error("DataCenter.Forums benchmark materialization failed", benchmarkInsertError.message);
+        return json({ error: "Benchmark materialization failed" }, 500);
+      }
+    }
+
     const { error: finalizeError } = await admin
       .from("perception_bridge_receipts")
       .update({

@@ -103,3 +103,41 @@ The stored integration metadata explicitly records:
 
 This bridge therefore conforms to the Perception Sovereign Storage Rule: DataCenter.Forums supplies bounded
 observations, while Legacy Works Ventures-controlled Perception storage remains authoritative.
+
+
+## Evaluation feedback loop
+
+DataCenter.Forums can send `evaluation.requested` events through the same signed bridge. The event remains a
+source observation, and the bridge additionally materializes a structured row in
+`perception_external_evaluation_cases` tied to the canonical Perception Project World and the source observation.
+
+The structured benchmark contains the external evaluation id, evaluation type, case key, subject references, input
+state, expected state, and benchmark metadata. It does not become Project World truth.
+
+Perception persists a grade locally before attempting any callback. The authenticated
+`datacenter-forums-evaluation-grade` Edge Function accepts a case id plus:
+
+- `outcome`: `pass`, `fail`, or `partial`
+- optional `score` from 0 to 1
+- optional `observed_state`
+- optional notes and grader-system label
+
+After local persistence, Perception posts the grade back to DataCenter.Forums using a **separate** HMAC secret.
+This outbound credential must not reuse the inbound evidence-bridge credential.
+
+Perception Edge secrets:
+
+- `DATACENTER_FORUMS_RESULT_URL` — DataCenter.Forums `/_api/perception/evaluation-result` URL.
+- `DATACENTER_FORUMS_RESULT_HMAC_SECRET` — high-entropy outbound result-signing secret.
+
+DataCenter.Forums stores the same secret only as `PERCEPTION_RESULT_HMAC_SECRET`.
+
+Outbound headers:
+
+- `x-perception-client: perception-runtime`
+- `x-perception-timestamp: <unix seconds>`
+- `x-perception-signature: sha256=<HMAC of timestamp + "." + exact body>`
+
+If the callback fails, the Perception benchmark case remains graded and is marked `return_failed`; retrying the
+callback cannot erase the local grade. DataCenter.Forums keeps an append-only result ledger before updating its
+current evaluation projection.
