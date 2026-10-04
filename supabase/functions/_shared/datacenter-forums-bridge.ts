@@ -1,3 +1,8 @@
+export const DATACENTER_TRANSPORT_LIMITS = {
+  maxClockSkewSeconds: 5 * 60,
+  maxRawBodyBytes: 275_000,
+} as const
+
 export const DATACENTER_EVENT_LIMITS = {
   eventId: 200,
   eventType: 80,
@@ -94,6 +99,42 @@ export function constantTimeHexEqual(left: string, right: string): boolean {
     mismatch |= left.charCodeAt(index) ^ right.charCodeAt(index)
   }
   return mismatch === 0
+}
+
+export async function hmacSha256Hex(secret: string, value: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(value))
+  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+export function isFreshUnixTimestamp(
+  value: string,
+  nowSeconds = Math.floor(Date.now() / 1000),
+  maxSkewSeconds = DATACENTER_TRANSPORT_LIMITS.maxClockSkewSeconds,
+): boolean {
+  const timestamp = Number(value)
+  return Number.isInteger(timestamp) && Math.abs(nowSeconds - timestamp) <= maxSkewSeconds
+}
+
+export async function verifyDataCenterSignature(
+  secret: string,
+  timestamp: string,
+  rawBody: string,
+  signatureHeader: string,
+): Promise<boolean> {
+  const supplied = signatureHeader.startsWith('sha256=')
+    ? signatureHeader.slice('sha256='.length)
+    : signatureHeader
+  if (!/^[0-9a-f]{64}$/i.test(supplied)) return false
+  const expected = await hmacSha256Hex(secret, `${timestamp}.${rawBody}`)
+  return constantTimeHexEqual(expected, supplied)
 }
 
 export async function prepareDataCenterEvent(
