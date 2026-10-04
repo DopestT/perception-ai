@@ -45,6 +45,21 @@ Provider responses remain proposals or observations until Perception validates t
 
 Provider request IDs may be retained as diagnostic provenance, but they can never be a required foreign key for restoring Project World.
 
+### Canonical provider-call provenance
+
+Every attempted model call that reaches the Perception runtime is recorded in the LWV-controlled `perception_provider_calls` ledger after a Project World exists. The ledger records provider, model, protocol, routing lane, task/stage, success/failure, bounded token usage, and the storage directive Perception sent.
+
+The ledger deliberately records:
+
+- `bounded_copy = true`;
+- `provider_state_authoritative = false`;
+- `canonical_dependency = false`;
+- OpenAI calls with `provider_storage_directive = store_false`.
+
+The database rejects an OpenAI provenance row that does not record `store_false`. Failed provider attempts are recorded even when the provider returns no token-usage object.
+
+This provenance is included in sovereign export manifests so an LWV-controlled restore can explain which external processors participated without requiring any of their server-side state.
+
 ## Conversation boundary
 
 Conversation text can be evidence. It is not truth by itself.
