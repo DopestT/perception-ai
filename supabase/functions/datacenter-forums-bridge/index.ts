@@ -154,6 +154,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const data = safeObject(payload.data);
+    const bodyHash = await sha256Hex(rawBody);
 
     const url = Deno.env.get("SUPABASE_URL");
     const secretKeys = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") ?? "{}") as Record<string, string>;
@@ -163,6 +164,85 @@ Deno.serve(async (req: Request) => {
     const admin = createClient(url, secretKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
+
+    const { data: insertedReceipt, error: receiptInsertError } = await admin
+      .from("perception_bridge_receipts")
+      .insert({
+        client_id: CLIENT_ID,
+        event_id: eventId,
+        body_hash: bodyHash,
+        status: "processing",
+      })
+      .select("id,body_hash,status,observation_id,updated_at")
+      .maybeSingle();
+
+    let receipt = insertedReceipt;
+
+    if (receiptInsertError) {
+      if (receiptInsertError.code !== "23505") {
+        console.error("DataCenter.Forums receipt insert failed", receiptInsertError.message);
+        return json({ error: "Bridge receipt unavailable" }, 503);
+      }
+
+      const { data: existingReceipt, error: receiptLookupError } = await admin
+        .from("perception_bridge_receipts")
+        .select("id,body_hash,status,observation_id,updated_at")
+        .eq("client_id", CLIENT_ID)
+        .eq("event_id", eventId)
+        .maybeSingle();
+
+      if (receiptLookupError || !existingReceipt) {
+        console.error("DataCenter.Forums receipt lookup failed", receiptLookupError?.message);
+        return json({ error: "Bridge receipt unavailable" }, 503);
+      }
+
+      if (existingReceipt.body_hash !== bodyHash) {
+        return json({ error: "Event id already exists with different content" }, 409);
+      }
+
+      if (existingReceipt.status === "accepted") {
+        return json({
+          ok: true,
+          duplicate: true,
+          project_id: configuredProjectId,
+          event_id: eventId,
+          inserted: false,
+          observation_id: existingReceipt.observation_id,
+        });
+      }
+
+      const updatedAt = Date.parse(existingReceipt.updated_at);
+      const processingIsFresh =
+        existingReceipt.status === "processing" &&
+        Number.isFinite(updatedAt) &&
+        Date.now() - updatedAt < 60_000;
+
+      if (processingIsFresh) {
+        return json({ error: "Event is already being processed" }, 409);
+      }
+
+      const { data: reclaimedReceipt, error: reclaimError } = await admin
+        .from("perception_bridge_receipts")
+        .update({
+          status: "processing",
+          last_error: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existingReceipt.id)
+        .eq("updated_at", existingReceipt.updated_at)
+        .select("id,body_hash,status,observation_id,updated_at")
+        .maybeSingle();
+
+      if (reclaimError || !reclaimedReceipt) {
+        return json({ error: "Event is already being retried" }, 409);
+      }
+
+      receipt = reclaimedReceipt;
+    }
+
+    if (!receipt?.id) {
+      return json({ error: "Bridge receipt unavailable" }, 503);
+    }
 
     const { data: project, error: projectError } = await admin
       .from("perception_projects")
@@ -186,7 +266,6 @@ Deno.serve(async (req: Request) => {
         client_id: CLIENT_ID,
         project_id: configuredProjectId,
         transport_auth: "hmac-sha256-v1",
-        request_timestamp: timestampSeconds,
         trust_boundary: "external_observation_only",
         authoritative_truth_requires_perception_verification: true,
       },
@@ -226,16 +305,42 @@ Deno.serve(async (req: Request) => {
     });
 
     if (error) {
+      await admin
+        .from("perception_bridge_receipts")
+        .update({
+          status: "failed",
+          last_error: `${error.code ?? "unknown"}: ${error.message ?? "ingestion failed"}`.slice(0, 1000),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", receipt.id);
+
       console.error("DataCenter.Forums bridge ingestion failed", { code: error.code, message: error.message });
       return json({ error: "Perception ingestion failed" }, 500);
     }
 
+    const observationId = result?.observation_id ?? null;
+    const { error: receiptAcceptError } = await admin
+      .from("perception_bridge_receipts")
+      .update({
+        status: "accepted",
+        observation_id: observationId,
+        last_error: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", receipt.id);
+
+    if (receiptAcceptError) {
+      console.error("DataCenter.Forums receipt finalize failed", receiptAcceptError.message);
+      return json({ error: "Bridge receipt finalization failed" }, 503);
+    }
+
     return json({
       ok: true,
+      duplicate: false,
       project_id: configuredProjectId,
       event_id: eventId,
       inserted: result?.inserted ?? null,
-      observation_id: result?.observation_id ?? null,
+      observation_id: observationId,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown";
