@@ -17,20 +17,24 @@ The bridge deliberately uses custom webhook authentication rather than a Supabas
 verify_jwt = false
 ```
 
-That only disables the Supabase gateway JWT check for this function. The function itself still rejects requests
-unless both of these headers are present and the shared-token SHA-256 matches in constant-time comparison:
+That only disables the Supabase gateway JWT check for this function. The function still authenticates every
+request itself with an HMAC signature over the exact request body and a short-lived timestamp.
+
+Required headers:
 
 - `x-perception-client: datacenter-forums`
-- `x-perception-token: <shared token>`
+- `x-perception-timestamp: <unix seconds>`
+- `x-perception-signature: sha256=<64 hex characters>`
 
-Never commit the raw shared token.
+The signature input is `<timestamp>.<exact raw JSON body>`, signed with HMAC-SHA256. Requests outside the
+five-minute clock-skew window are rejected. Changing even one byte of the body invalidates the signature.
 
 ## Perception Edge secrets
 
 Configure these server-side:
 
 - `DATACENTER_FORUMS_PROJECT_ID` — UUID of the Perception Project World receiving this evidence stream.
-- `DATACENTER_FORUMS_TOKEN_SHA256` — lowercase 64-character SHA-256 of the shared token.
+- `DATACENTER_FORUMS_HMAC_SECRET` — high-entropy server-side secret used only for HMAC request signing.
 
 The function uses the Supabase Edge runtime's secret/service credential only inside the function to call the
 existing privileged ingestion RPC.
@@ -40,7 +44,7 @@ existing privileged ingestion RPC.
 Configure these only in the DataCenter.Forums backend:
 
 - `PERCEPTION_BRIDGE_URL` — deployed URL for `datacenter-forums-bridge`.
-- `PERCEPTION_BRIDGE_TOKEN` — the raw shared token whose hash is stored in Perception.
+- `PERCEPTION_BRIDGE_HMAC_SECRET` — the same HMAC secret held by the Perception receiver. The secret itself is never sent over the wire.
 
 ## Event contract
 
@@ -71,12 +75,17 @@ Optional:
 Oversized identifiers are rejected rather than truncated so distinct upstream identities cannot collapse into one
 observation.
 
-## Idempotency
+## Idempotency and immutable event identity
 
-The content hash is computed from normalized stable event fields. The bridge does not inject the current time.
+The content hash is computed from normalized stable event fields. Transport timestamps are not injected into the
+observation payload, so signing a retry with a fresh timestamp does not change the evidence identity.
 
-Retrying the same event with the same `event_id`, timestamp, and content therefore produces the same content hash
-and follows Perception's existing source-observation deduplication path.
+A private `perception_bridge_receipts` ledger permanently binds each `event_id` to the SHA-256 hash of the
+exact signed request body. The same event id with the same body is idempotent. Reusing that id with different
+content is rejected with HTTP 409.
+
+A failed or stale processing receipt can be reclaimed safely. An already accepted receipt returns success without
+creating another observation.
 
 ## Reserved-field protection
 

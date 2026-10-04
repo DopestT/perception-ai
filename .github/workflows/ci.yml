@@ -20,8 +20,10 @@ jobs:
         run: |
           grep -q '^\[functions.datacenter-forums-bridge\]$' supabase/config.toml
           grep -A 1 '^\[functions.datacenter-forums-bridge\]$' supabase/config.toml | grep -q '^verify_jwt = false$'
-          grep -q 'x-perception-token' supabase/functions/datacenter-forums-bridge/index.ts
-          grep -q 'constantTimeHexEqual' supabase/functions/datacenter-forums-bridge/index.ts
+          grep -q 'x-perception-timestamp' supabase/functions/datacenter-forums-bridge/index.ts
+          grep -q 'x-perception-signature' supabase/functions/datacenter-forums-bridge/index.ts
+          grep -q 'verifyDataCenterSignature' supabase/functions/datacenter-forums-bridge/index.ts
+          grep -q 'perception_bridge_receipts' supabase/functions/datacenter-forums-bridge/index.ts
       - run: bash -n scripts/perception-sovereign-backup.sh scripts/perception-sovereign-restore-check.sh
       - run: npm run build
       - run: npm --prefix microsites/hagerstown test

@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   constantTimeHexEqual,
   DATACENTER_EVENT_LIMITS,
+  DATACENTER_TRANSPORT_LIMITS,
+  hmacSha256Hex,
+  isFreshUnixTimestamp,
   prepareDataCenterEvent,
+  verifyDataCenterSignature,
 } from '../../supabase/functions/_shared/datacenter-forums-bridge'
 
 const base = {
@@ -71,7 +75,32 @@ describe('DataCenter.Forums evidence bridge normalization', () => {
     expect(result).toMatchObject({ ok: false, status: 413 })
   })
 
-  it('compares configured token hashes without early-return string comparison', () => {
+  it('accepts a valid HMAC signature and rejects body tampering', async () => {
+    const secret = 'a'.repeat(32)
+    const timestamp = '1791086400'
+    const rawBody = JSON.stringify(base)
+    const signature = await hmacSha256Hex(secret, `${timestamp}.${rawBody}`)
+
+    await expect(
+      verifyDataCenterSignature(secret, timestamp, rawBody, `sha256=${signature}`),
+    ).resolves.toBe(true)
+    await expect(
+      verifyDataCenterSignature(secret, timestamp, rawBody + ' ', `sha256=${signature}`),
+    ).resolves.toBe(false)
+  })
+
+  it('rejects stale and future transport timestamps outside the replay window', () => {
+    const now = 1_791_086_400
+    const skew = DATACENTER_TRANSPORT_LIMITS.maxClockSkewSeconds
+    expect(isFreshUnixTimestamp(String(now), now)).toBe(true)
+    expect(isFreshUnixTimestamp(String(now - skew), now)).toBe(true)
+    expect(isFreshUnixTimestamp(String(now + skew), now)).toBe(true)
+    expect(isFreshUnixTimestamp(String(now - skew - 1), now)).toBe(false)
+    expect(isFreshUnixTimestamp(String(now + skew + 1), now)).toBe(false)
+    expect(isFreshUnixTimestamp('not-a-time', now)).toBe(false)
+  })
+
+  it('compares configured hashes without early-return string comparison', () => {
     const a = 'a'.repeat(64)
     const b = 'a'.repeat(63) + 'b'
     expect(constantTimeHexEqual(a, a)).toBe(true)
