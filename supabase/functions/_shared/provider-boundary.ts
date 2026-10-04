@@ -20,6 +20,13 @@ export function providerStorageDirectives(
   return target.provider === 'openai' ? { store: false } : {}
 }
 
+export function providerStorageAuditMode(
+  target: Pick<ModelTarget, 'provider'>,
+  protocol: ModelProtocol,
+): 'store_false' | 'none' {
+  return providerStorageDirectives(target, protocol).store === false ? 'store_false' : 'none'
+}
+
 export function providerStateIsAuthoritative(): false {
   return false
 }
