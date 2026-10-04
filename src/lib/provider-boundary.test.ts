@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   PERCEPTION_SOVEREIGN_PROVIDER_NOTICE,
   providerStateIsAuthoritative,
+  providerStorageAuditMode,
   providerStorageDirectives,
   providerSystemPrompt,
 } from '../../supabase/functions/_shared/provider-boundary'
@@ -19,6 +20,12 @@ describe('Perception sovereign provider boundary', () => {
   it('does not send OpenAI-specific storage flags to compatible or local endpoints', () => {
     expect(providerStorageDirectives({ provider: 'openai_compatible' }, 'responses')).toEqual({})
     expect(providerStorageDirectives({ provider: 'local' }, 'chat_completions')).toEqual({})
+  })
+
+  it('records the exact provider storage directive without making it authoritative', () => {
+    expect(providerStorageAuditMode({ provider: 'openai' }, 'responses')).toBe('store_false')
+    expect(providerStorageAuditMode({ provider: 'openai_compatible' }, 'chat_completions')).toBe('none')
+    expect(providerStorageAuditMode({ provider: 'local' }, 'chat_completions')).toBe('none')
   })
 
   it('adds the sovereign-storage rule to bounded provider prompts', () => {
