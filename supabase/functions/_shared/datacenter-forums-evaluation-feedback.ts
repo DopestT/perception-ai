@@ -122,9 +122,10 @@ export async function buildSignedEvaluationResultRequest(
 
 export async function sendDataCenterEvaluationResult(
   input: DataCenterEvaluationResult,
+  config: { url: string; secret: string },
 ) {
-  const url = Deno.env.get("DATACENTER_FORUMS_RESULT_URL")?.trim() || "";
-  const secret = Deno.env.get("DATACENTER_FORUMS_RESULT_HMAC_SECRET")?.trim() || "";
+  const url = config.url.trim();
+  const secret = config.secret.trim();
 
   if (!url || secret.length < 32) {
     throw new Error("DataCenter.Forums evaluation result callback is not configured");
