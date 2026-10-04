@@ -29,6 +29,7 @@ function walk(dir) {
   return entries.flatMap((entry) => {
     const full = path.join(dir, entry.name)
     if (entry.isDirectory()) return walk(full)
+    if (/\.(?:test|spec)\.[cm]?[jt]sx?$/.test(entry.name)) return []
     return extensions.has(path.extname(entry.name)) ? [full] : []
   })
 }
