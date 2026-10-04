@@ -19,9 +19,13 @@ The bridge is deliberately narrow:
 - bounded field lengths
 - external observations remain non-authoritative until Perception verifies them
 - duplicate observation bodies are idempotent through Perception's existing `source_id + content_hash` uniqueness
+- every `event_id` is locked to one exact signed request body in a private bridge receipt ledger
+- reusing an existing `event_id` with different content is rejected with HTTP 409
+- failed/stale deliveries can be reclaimed and retried without weakening event identity
 
 A captured signed request cannot be replayed after the timestamp window. A duplicate received within
-the window resolves to the same content hash and does not create a second observation.
+the window resolves through the receipt ledger and does not create a second observation. Event identity
+is immutable: the same event id can never later be used to smuggle different content into Perception.
 
 ## Perception Edge secrets
 
