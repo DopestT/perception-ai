@@ -135,6 +135,9 @@ Deno.serve(async (req: Request) => {
     }
 
     try {
+      const resultUrl = Deno.env.get("DATACENTER_FORUMS_RESULT_URL")?.trim() || "";
+      const resultSecret = Deno.env.get("DATACENTER_FORUMS_RESULT_HMAC_SECRET")?.trim() || "";
+
       const callback = await sendDataCenterEvaluationResult({
         evalType: benchmarkCase.eval_type,
         caseKey: benchmarkCase.case_key,
@@ -143,6 +146,9 @@ Deno.serve(async (req: Request) => {
         observedState,
         notes,
         graderSystem,
+      }, {
+        url: resultUrl,
+        secret: resultSecret,
       });
 
       const returnedAt = new Date().toISOString();
