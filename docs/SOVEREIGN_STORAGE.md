@@ -35,6 +35,8 @@ AI providers are **processors**, never state owners.
 
 Every provider request is a bounded working copy.
 
+Every provider receives a **non-authoritative working copy** of only the context required for the bounded operation.
+
 For OpenAI requests, Perception explicitly sends `store: false`. Perception does not use provider conversations, previous-response chains, assistants, threads, hosted vector stores, or provider file-search stores as durable Project World state.
 
 OpenAI-compatible and local endpoints receive only the bounded task context required for the current operation. Perception does not assume that a compatible endpoint supports OpenAI-specific storage flags.
