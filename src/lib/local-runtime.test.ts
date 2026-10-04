@@ -49,7 +49,7 @@ describe('bounded local runtime worker', () => {
 
 
   it('keeps OpenAI local-worker requests out of provider application storage', async () => {
-    let body: Record<string, unknown> | null = null
+    const captured: { body?: Record<string, unknown> } = {}
     const result = await materializeLocalArtifact({
       objective: 'Create a launch plan',
       desiredReality: 'A launch plan exists',
@@ -57,7 +57,7 @@ describe('bounded local runtime worker', () => {
       outcome: 'Launch plan',
       candidates: [target],
       fetchImpl: async (_input, init) => {
-        body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+        captured.body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
         return new Response(JSON.stringify({
           output_text: JSON.stringify({
             title: 'Launch plan',
@@ -70,8 +70,8 @@ describe('bounded local runtime worker', () => {
     })
 
     expect(result.ok).toBe(true)
-    expect(body?.store).toBe(false)
-    const input = body?.input as Array<{ role: string; content: string }>
+    expect(captured.body?.store).toBe(false)
+    const input = captured.body?.input as Array<{ role: string; content: string }>
     expect(input[0]?.content).toContain('non-authoritative working copy')
   })
 
