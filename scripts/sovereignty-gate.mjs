@@ -70,6 +70,22 @@ if (fs.existsSync(legacyStore)) {
   failures.push('src/lib/perception-store.ts: legacy browser workspace store must not exist in production runtime')
 }
 
+const runtimeEntry = path.join(root, 'supabase', 'functions', 'perceive-objective', 'index.ts')
+if (!fs.existsSync(runtimeEntry)) {
+  failures.push('supabase/functions/perceive-objective/index.ts: runtime entry is missing')
+} else {
+  const runtime = fs.readFileSync(runtimeEntry, 'utf8')
+  for (const required of [
+    'perception_record_provider_call_internal',
+    'providerStorageAuditMode',
+    'provider_provenance',
+  ]) {
+    if (!runtime.includes(required)) {
+      failures.push(`supabase/functions/perceive-objective/index.ts: missing canonical provider provenance marker: ${required}`)
+    }
+  }
+}
+
 const sovereignDoc = path.join(root, 'docs', 'SOVEREIGN_STORAGE.md')
 if (!fs.existsSync(sovereignDoc)) {
   failures.push('docs/SOVEREIGN_STORAGE.md: sovereign storage contract is missing')
