@@ -317,7 +317,7 @@ export async function resolveObjectiveMeaning(
           model: target.model,
           ...providerStorageDirectives(target, protocol),
           input: [
-            { role: 'system', content: systemPrompt },
+            { role: 'system', content: providerSystemPrompt(systemPrompt) },
             { role: 'user', content: statement },
           ],
           text: {
