@@ -16,6 +16,24 @@ jobs:
       - run: npm install
       - run: npm test
       - run: npm run test:sovereignty
+      - name: DataCenter bridge auth gate
+        run: |
+          grep -q '^\[functions.datacenter-forums-bridge\]      - run: bash -n scripts/perception-sovereign-backup.sh scripts/perception-sovereign-restore-check.sh
+      - run: npm run build
+      - run: npm --prefix microsites/hagerstown test
+      - run: npm --prefix microsites/hagerstown run build
+ supabase/config.toml
+          grep -A 1 '^\[functions.datacenter-forums-bridge\]      - run: bash -n scripts/perception-sovereign-backup.sh scripts/perception-sovereign-restore-check.sh
+      - run: npm run build
+      - run: npm --prefix microsites/hagerstown test
+      - run: npm --prefix microsites/hagerstown run build
+ supabase/config.toml | grep -q '^verify_jwt = false      - run: bash -n scripts/perception-sovereign-backup.sh scripts/perception-sovereign-restore-check.sh
+      - run: npm run build
+      - run: npm --prefix microsites/hagerstown test
+      - run: npm --prefix microsites/hagerstown run build
+
+          grep -q 'x-perception-token' supabase/functions/datacenter-forums-bridge/index.ts
+          grep -q 'constantTimeHexEqual' supabase/functions/datacenter-forums-bridge/index.ts
       - run: bash -n scripts/perception-sovereign-backup.sh scripts/perception-sovereign-restore-check.sh
       - run: npm run build
       - run: npm --prefix microsites/hagerstown test
