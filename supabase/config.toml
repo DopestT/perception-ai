@@ -1,0 +1,5 @@
+# Function-specific security configuration.
+# This bridge intentionally disables Supabase JWT verification because it is a
+# server-to-server webhook with its own constant-time shared-token check.
+[functions.datacenter-forums-bridge]
+verify_jwt = false
