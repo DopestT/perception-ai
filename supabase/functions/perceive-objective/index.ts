@@ -9,6 +9,7 @@ import { materializeGitHubCodePlan, type GitHubCodePlanResult } from '../_shared
 import { materializeLocalArtifact, verifyLocalArtifact } from '../_shared/local-runtime.ts'
 import { isVerifiedGitHubOperatorAttachment, parseGitHubOperatorTarget } from '../_shared/operator-attachment.ts'
 import { mergeSourceRefs, normalizeSourceRefs } from '../_shared/source-refs.ts'
+import { providerStorageAuditMode } from '../_shared/provider-boundary.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -508,6 +509,99 @@ Deno.serve(async (req: Request) => {
       budgetPressure,
     })
 
+    const recordProviderAttempts = async (
+      attempts: Array<{
+        provider: ModelTarget['provider']
+        model: string
+        protocol: ModelProtocol
+        ok: boolean
+        reason?: string
+        lane?: ModelTarget['lane']
+        stage?: string
+        usage?: {
+          inputTokens: number
+          cachedInputTokens: number
+          outputTokens: number
+          reasoningTokens: number
+        }
+      }>,
+      context: {
+        projectId: string
+        objectiveId: string | null
+        workerRunId: string | null
+        capability: string
+        taskKind: string
+      },
+    ) => {
+      const recorded: Array<{ id: string; provider: string; model: string; ok: boolean }> = []
+
+      for (const [index, attempt] of attempts.entries()) {
+        const target = configuredTargets.find(
+          (candidate) => candidate.provider === attempt.provider && candidate.model === attempt.model,
+        )
+        const usage = attempt.usage ?? {
+          inputTokens: 0,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+        }
+
+        const call = await admin.rpc('perception_record_provider_call_internal', {
+          p_user_id: userData.user.id,
+          p_project_id: context.projectId,
+          p_objective_id: context.objectiveId,
+          p_worker_run_id: context.workerRunId,
+          p_capability: context.capability,
+          p_task_kind: context.taskKind,
+          p_stage: attempt.stage ?? null,
+          p_attempt_ordinal: index + 1,
+          p_provider: attempt.provider,
+          p_model: attempt.model,
+          p_protocol: attempt.protocol,
+          p_model_lane: attempt.lane ?? target?.lane ?? null,
+          p_ok: attempt.ok,
+          p_reason: attempt.reason ?? null,
+          p_input_tokens: usage.inputTokens,
+          p_cached_input_tokens: usage.cachedInputTokens,
+          p_output_tokens: usage.outputTokens,
+          p_reasoning_tokens: usage.reasoningTokens,
+          p_provider_storage_directive: providerStorageAuditMode(
+            { provider: attempt.provider },
+            attempt.protocol,
+          ),
+          p_metadata: {
+            sovereign_boundary: 'provider_non_authoritative_v1',
+            routing_strategy: 'verified-cheapest-first',
+            usage_present: Boolean(attempt.usage),
+          },
+        })
+
+        if (call.error) {
+          if (call.error.code !== 'PGRST202' && call.error.code !== '42883') {
+            console.error('Perception provider-call provenance failed', {
+              code: call.error.code,
+              message: call.error.message,
+              provider: attempt.provider,
+              model: attempt.model,
+              task_kind: context.taskKind,
+            })
+          }
+          continue
+        }
+
+        if (typeof call.data === 'string') {
+          recorded.push({
+            id: call.data,
+            provider: attempt.provider,
+            model: attempt.model,
+            ok: attempt.ok,
+          })
+        }
+      }
+
+      return recorded
+    }
+
     const meaning = resumeObjective
       ? storedObjectiveMeaning(resumeObjective)
       : await resolveObjectiveMeaning(statement, {
@@ -616,6 +710,21 @@ Deno.serve(async (req: Request) => {
     const projectId = typeof runtimeResult.project_id === 'string' ? runtimeResult.project_id : null
     const objectiveId = typeof runtimeResult.objective_id === 'string' ? runtimeResult.objective_id : null
     const routeId = typeof runtimeResult.route_id === 'string' ? runtimeResult.route_id : null
+
+    const providerCallEvidence: Array<Record<string, unknown>> = []
+    if (projectId && objectiveId && meaning.routing_attempts.length > 0) {
+      const recorded = await recordProviderAttempts(meaning.routing_attempts, {
+        projectId,
+        objectiveId,
+        workerRunId: null,
+        capability: 'reason',
+        taskKind: 'meaning_resolver',
+      })
+      providerCallEvidence.push(...recorded.map((entry) => ({
+        kind: 'provider_call',
+        ...entry,
+      })))
+    }
 
     let sourceRefsAccepted = 0
     if (action === 'submit' && objectiveId && requestedSourceRefs.length > 0) {
@@ -1044,6 +1153,19 @@ Deno.serve(async (req: Request) => {
               maxOutputTokens: localDecision.maxOutputTokens,
             })
             const verification = verifyLocalArtifact(materialized, plannedNode.outcome)
+
+            const recordedLocalProviderCalls = await recordProviderAttempts(materialized.attempts, {
+              projectId,
+              objectiveId,
+              workerRunId: worker.id,
+              capability: 'generate',
+              taskKind: 'local_generate_worker',
+            })
+            providerCallEvidence.push(...recordedLocalProviderCalls.map((entry) => ({
+              kind: 'provider_call',
+              worker_run_id: worker.id,
+              ...entry,
+            })))
 
             for (const attempt of materialized.attempts) {
               if (!attempt.usage) continue
@@ -1694,6 +1816,19 @@ Deno.serve(async (req: Request) => {
                 ...materializerResult,
               })
 
+              const recordedCodeProviderCalls = await recordProviderAttempts(materializerResult.attempts, {
+                projectId,
+                objectiveId,
+                workerRunId: worker.id,
+                capability: 'code',
+                taskKind: 'github_code_plan_materializer',
+              })
+              providerCallEvidence.push(...recordedCodeProviderCalls.map((entry) => ({
+                kind: 'provider_call',
+                worker_run_id: worker.id,
+                ...entry,
+              })))
+
               const deepestPrice = configuredTargets
                 .filter((target) => target.lane === 'deep' && target.price)
                 .map((target) => target.price)[0]
@@ -2164,6 +2299,11 @@ Deno.serve(async (req: Request) => {
         })),
         utility: scenarioUtility,
         forge: scenarioForge,
+      },
+      provider_provenance: {
+        authoritative_state: false,
+        canonical_dependency: false,
+        recorded_calls: providerCallEvidence,
       },
       token_control: {
         enabled: costControlEnabled,
