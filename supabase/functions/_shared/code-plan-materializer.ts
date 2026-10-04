@@ -1,4 +1,5 @@
 import type { ModelProtocol, ModelTarget } from './token-efficiency.ts'
+import { providerStorageDirectives, providerSystemPrompt } from './provider-boundary.ts'
 
 export type CodePlanUsage = {
   inputTokens: number
@@ -433,8 +434,9 @@ async function callStructuredModel(input: {
     const body = protocol === 'chat_completions'
       ? {
           model: target.model,
+          ...providerStorageDirectives(target, protocol),
           messages: [
-            { role: 'system', content: input.system },
+            { role: 'system', content: providerSystemPrompt(input.system) },
             { role: 'user', content: input.user },
           ],
           response_format: {
@@ -449,8 +451,9 @@ async function callStructuredModel(input: {
         }
       : {
           model: target.model,
+          ...providerStorageDirectives(target, protocol),
           input: [
-            { role: 'system', content: input.system },
+            { role: 'system', content: providerSystemPrompt(input.system) },
             { role: 'user', content: input.user },
           ],
           text: {

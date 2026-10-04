@@ -1,4 +1,5 @@
 import type { ModelLane, ModelProvider, ModelProtocol, ModelTarget } from './token-efficiency.ts'
+import { providerStorageDirectives, providerSystemPrompt } from './provider-boundary.ts'
 
 export type ObjectiveUrgency = 'low' | 'normal' | 'high' | 'critical'
 
@@ -297,8 +298,9 @@ export async function resolveObjectiveMeaning(
     const body = protocol === 'chat_completions'
       ? {
           model: target.model,
+          ...providerStorageDirectives(target, protocol),
           messages: [
-            { role: 'system', content: systemPrompt },
+            { role: 'system', content: providerSystemPrompt(systemPrompt) },
             { role: 'user', content: statement },
           ],
           response_format: {
@@ -313,8 +315,9 @@ export async function resolveObjectiveMeaning(
         }
       : {
           model: target.model,
+          ...providerStorageDirectives(target, protocol),
           input: [
-            { role: 'system', content: systemPrompt },
+            { role: 'system', content: providerSystemPrompt(systemPrompt) },
             { role: 'user', content: statement },
           ],
           text: {

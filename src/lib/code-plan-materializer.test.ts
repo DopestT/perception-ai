@@ -58,6 +58,7 @@ describe('P1 GitHub code-plan materializer', () => {
     }
     const githubMethods: string[] = []
     let modelCall = 0
+    const modelBodies: Array<Record<string, unknown>> = []
 
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = String(input)
@@ -89,6 +90,7 @@ describe('P1 GitHub code-plan materializer', () => {
       }
 
       modelCall += 1
+      modelBodies.push(JSON.parse(String(init?.body || '{}')) as Record<string, unknown>)
       if (modelCall === 1) {
         return new Response(JSON.stringify({
           output_text: JSON.stringify({
@@ -137,5 +139,8 @@ describe('P1 GitHub code-plan materializer', () => {
     expect(result.write_paths).toEqual(['src/runtime.ts'])
     expect(githubMethods.every((method) => method === 'GET')).toBe(true)
     expect(modelCall).toBe(2)
+    expect(modelBodies.every((body) => body.store === false)).toBe(true)
+    const firstInput = modelBodies[0]?.input as Array<{ role: string; content: string }>
+    expect(firstInput[0]?.content).toContain('non-authoritative working copy')
   })
 })

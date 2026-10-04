@@ -6,6 +6,14 @@
 
 Perception is a durable orchestrator, not a conversation transcript and not an uncontrolled swarm. One orchestrator owns project truth. Bounded workers perform specific operations and return evidence.
 
+## Sovereign storage invariant
+
+Legacy Works Ventures owns Perception's canonical state. AI providers process bounded, disposable working copies only.
+
+Provider memory, conversation objects, vector stores, assistants, threads, previous-response chains, or proprietary model persistence cannot be required to restore Project World. OpenAI requests explicitly use `store: false`; other providers are treated as stateless processors unless an LWV-controlled adapter explicitly provides otherwise.
+
+The complete contract is in [SOVEREIGN_STORAGE.md](./SOVEREIGN_STORAGE.md).
+
 ## Runtime pipeline
 
 Objective Intake → Meaning Resolver → Project World → Reality Mapper → Route Planner → Capability Router → Execution Runtime → Permission Gate → Verification Engine → Adaptation Engine → Realization → Learning

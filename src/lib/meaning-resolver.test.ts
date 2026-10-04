@@ -61,6 +61,40 @@ describe('Perception Meaning Resolver', () => {
     expect(meaning.inferred_claims[0]?.confidence).toBe(0.7)
   })
 
+
+  it('sends OpenAI meaning requests as non-persistent bounded copies', async () => {
+    const captured: { body?: Record<string, unknown> } = {}
+    const fakeFetch: typeof fetch = async (_input, init) => {
+      captured.body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+      return new Response(JSON.stringify({
+        output_text: JSON.stringify({
+          desired_reality: 'A bounded result',
+          current_reality: 'Only submitted evidence is known.',
+          constraints: [],
+          success_criteria: ['Bounded result exists'],
+          deliverables: ['Result'],
+          urgency: 'normal',
+          known_unknowns: [],
+          inferred_claims: [],
+          confidence: 0.8,
+        }),
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+
+    await resolveObjectiveMeaning('Create a bounded result.', {
+      apiKey: 'test-key',
+      model: 'test-model',
+      fetchImpl: fakeFetch,
+    })
+
+    expect(captured.body?.store).toBe(false)
+    const input = captured.body?.input as Array<{ role: string; content: string }>
+    expect(input[0]?.content).toContain('non-authoritative working copy')
+    expect(captured.body).not.toHaveProperty('conversation')
+    expect(captured.body).not.toHaveProperty('previous_response_id')
+  })
+
+
   it('falls back safely when the provider fails', async () => {
     const fakeFetch: typeof fetch = async () => new Response('nope', { status: 500 })
 

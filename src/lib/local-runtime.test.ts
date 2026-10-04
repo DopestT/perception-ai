@@ -47,6 +47,35 @@ describe('bounded local runtime worker', () => {
     expect(verifyLocalArtifact(result, 'Launch plan').passed).toBe(true)
   })
 
+
+  it('keeps OpenAI local-worker requests out of provider application storage', async () => {
+    const captured: { body?: Record<string, unknown> } = {}
+    const result = await materializeLocalArtifact({
+      objective: 'Create a launch plan',
+      desiredReality: 'A launch plan exists',
+      currentReality: 'Only intent is known',
+      outcome: 'Launch plan',
+      candidates: [target],
+      fetchImpl: async (_input, init) => {
+        captured.body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+        return new Response(JSON.stringify({
+          output_text: JSON.stringify({
+            title: 'Launch plan',
+            content: 'Launch plan: define the audience, prepare assets, sequence release steps, assign owners, check dependencies, and verify each bounded deliverable before any external action is taken.',
+            completion_evidence: ['The draft includes audience, assets, sequence, owners, dependencies, and verification.'],
+            confidence: 0.9,
+          }),
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    expect(captured.body?.store).toBe(false)
+    const input = captured.body?.input as Array<{ role: string; content: string }>
+    expect(input[0]?.content).toContain('non-authoritative working copy')
+  })
+
+
   it('blocks output that is too small to count as a real deliverable', async () => {
     const result = await materializeLocalArtifact({
       objective: 'Create a launch plan',

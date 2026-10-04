@@ -2,6 +2,13 @@
 
 # Perception — Current Reality
 
+## Sovereign storage status
+
+The governing storage rule is now explicit: Legacy Works Ventures owns Perception's canonical state. The production runtime restores Project World from the Perception database, not provider memory or browser-local workspace state. Model calls are bounded processor calls and OpenAI requests opt out of provider application-state storage with `store: false`.
+
+A machine-readable storage-authority record, sovereign export ledger, manifest/checksum functions, provider-boundary helper, and CI sovereignty gate are part of the current build. Provider conversations, assistants, threads, vector stores, and previous-response chains are prohibited as canonical dependencies.
+
+
 Evidence-backed production state after the canonical Supabase cutover on 2026-09-06/07.
 
 ## Canonical backend authority
