@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   constantTimeHexEqual,
@@ -77,5 +78,19 @@ describe('DataCenter.Forums evidence bridge normalization', () => {
     expect(constantTimeHexEqual(a, a)).toBe(true)
     expect(constantTimeHexEqual(a, b)).toBe(false)
     expect(constantTimeHexEqual('short', a)).toBe(false)
+  })
+
+  it('keeps Supabase gateway JWT verification off only for the custom-auth webhook', () => {
+    const config = fs.readFileSync(new URL('../../supabase/config.toml', import.meta.url), 'utf8')
+    expect(config).toContain('[functions.datacenter-forums-bridge]')
+    expect(config).toMatch(/\[functions\.datacenter-forums-bridge\][\s\S]*verify_jwt\s*=\s*false/)
+
+    const index = fs.readFileSync(
+      new URL('../../supabase/functions/datacenter-forums-bridge/index.ts', import.meta.url),
+      'utf8',
+    )
+    expect(index).toContain('x-perception-token')
+    expect(index).toContain('constantTimeHexEqual')
+    expect(index).toContain('prepareDataCenterEvent')
   })
 })
