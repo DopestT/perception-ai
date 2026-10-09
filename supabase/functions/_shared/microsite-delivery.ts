@@ -54,7 +54,9 @@ export async function dispatchHomeownerNotice(
     type: input.type,
     rendered: input.rendered,
   }
-  if (mode === 'PRACTICE') return { status: 'SIMULATED', simulated: true, metadata }
+  if (mode === 'PRACTICE' || mode === 'LIVE_DISABLED') {
+    return { status: 'SIMULATED', simulated: true, metadata }
+  }
   return {
     status: 'BLOCKED',
     simulated: false,
