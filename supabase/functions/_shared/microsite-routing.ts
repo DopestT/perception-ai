@@ -8,6 +8,15 @@ export type RoutingServiceKey =
 
 export type RoutingUrgency = 'EMERGENCY' | 'ROUTINE'
 export type RoutingProviderStatus = 'ACTIVE' | 'PAUSED' | 'DISABLED'
+export type RoutingLeadState =
+  | 'NEW' | 'QUALIFIED' | 'ROUTING' | 'ACCEPTED' | 'CONTACTED' | 'APPOINTMENT' | 'COMPLETED'
+  | 'DUPLICATE' | 'UNQUALIFIED' | 'UNROUTABLE' | 'LOST' | 'CANCELLED' | 'MANUAL_REVIEW'
+export type HomeownerNoticeType =
+  | 'REQUEST_RECEIVED'
+  | 'PROVIDER_ACCEPTED'
+  | 'NO_PROVIDER_SECURED'
+  | 'REQUEST_CANCELLED'
+  | 'OUTCOME_FOLLOWUP'
 
 export type RoutingProvider = {
   id: string
@@ -64,6 +73,20 @@ export type IneligibleProvider = {
 export type ProviderRanking = {
   eligible: RankedProvider[]
   ineligible: IneligibleProvider[]
+}
+
+export type HomeownerNoticeInput = {
+  leadId: string
+  simulated: boolean
+  acceptedProviderId?: string | null
+  providerName?: string | null
+  internal?: unknown
+}
+
+export type RenderedHomeownerNotice = {
+  subject: string
+  body: string
+  simulated: boolean
 }
 
 const SERVICE_KEYS = new Set<RoutingServiceKey>([
@@ -224,4 +247,57 @@ export function rankEligibleProviders(input: {
 
 export function offerTimeoutSeconds(urgency: RoutingUrgency, policy: RoutingPolicy): number {
   return urgency === 'EMERGENCY' ? policy.emergencyTimeoutSeconds : policy.routineTimeoutSeconds
+}
+
+export function canTransitionRoutingLeadState(from: RoutingLeadState, to: RoutingLeadState): boolean {
+  const allowed: Partial<Record<RoutingLeadState, RoutingLeadState[]>> = {
+    NEW: ['CANCELLED'],
+    QUALIFIED: ['CANCELLED'],
+    ROUTING: ['CANCELLED'],
+    ACCEPTED: ['CONTACTED', 'LOST', 'CANCELLED'],
+    CONTACTED: ['APPOINTMENT', 'LOST', 'CANCELLED'],
+    APPOINTMENT: ['COMPLETED', 'LOST', 'CANCELLED'],
+  }
+  return allowed[from]?.includes(to) ?? false
+}
+
+export function renderHomeownerNotice(
+  type: HomeownerNoticeType,
+  input: HomeownerNoticeInput,
+): RenderedHomeownerNotice {
+  switch (type) {
+    case 'REQUEST_RECEIVED':
+      return {
+        subject: 'Hagerstown Well Help request received',
+        body: 'We received your Hagerstown Well Help request. We are checking for a participating local provider who fits the request and is available.',
+        simulated: input.simulated,
+      }
+    case 'PROVIDER_ACCEPTED': {
+      const providerName = String(input.providerName ?? '').trim()
+      if (!input.acceptedProviderId || !providerName) throw new Error('An accepted provider is required before naming a provider')
+      return {
+        subject: 'A local provider accepted your request',
+        body: `${providerName} accepted your Hagerstown Well Help request. Hagerstown Well Help is a referral service; service is provided independently by the participating provider.`,
+        simulated: input.simulated,
+      }
+    }
+    case 'NO_PROVIDER_SECURED':
+      return {
+        subject: 'Update on your Hagerstown Well Help request',
+        body: 'We have not secured a participating provider for your request yet. No provider match has been confirmed.',
+        simulated: input.simulated,
+      }
+    case 'REQUEST_CANCELLED':
+      return {
+        subject: 'Hagerstown Well Help request cancelled',
+        body: 'Your Hagerstown Well Help request has been cancelled. No further routing will be attempted for this request.',
+        simulated: input.simulated,
+      }
+    case 'OUTCOME_FOLLOWUP':
+      return {
+        subject: 'How did your service request go?',
+        body: 'Please let us know whether your Hagerstown Well Help service request was completed and whether you need any follow-up.',
+        simulated: input.simulated,
+      }
+  }
 }
