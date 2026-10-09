@@ -3,6 +3,8 @@ import {
   handleMicrositeProviderResponse,
   type ProviderResponseRepository,
 } from '../_shared/microsite-provider-response.ts'
+import { dispatchHomeownerNotice } from '../_shared/microsite-delivery.ts'
+import { renderHomeownerNotice } from '../_shared/microsite-routing.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -62,6 +64,79 @@ Deno.serve(async (req: Request) => {
 
   try {
     const result = await handleMicrositeProviderResponse({ token, response }, repo, secret)
+
+    if (result.body.status === 'accepted') {
+      const verified = await repo.getOffer((await import('../_shared/microsite-offer-token.ts')).then ? '' : '')
+      void verified
+    }
+
+    if (result.body.status === 'accepted') {
+      // Derive the accepted offer from the token only after the scoped handler has verified it.
+      const { verifyOfferToken } = await import('../_shared/microsite-offer-token.ts')
+      const verifiedToken = await verifyOfferToken(token, secret)
+      if (verifiedToken.ok) {
+        const { data: offer, error: offerError } = await admin
+          .from('perception_microsite_lead_offers')
+          .select('id,user_id,lead_id,route_id,provider_id')
+          .eq('id', verifiedToken.payload.offerId)
+          .maybeSingle()
+        if (offerError) throw new Error(`accepted_offer_lookup:${offerError.code}`)
+
+        if (offer) {
+          const { data: route, error: routeError } = await admin
+            .from('perception_microsite_lead_routes')
+            .select('id,practice,accepted_provider_id')
+            .eq('id', offer.route_id)
+            .maybeSingle()
+          if (routeError) throw new Error(`accepted_route_lookup:${routeError.code}`)
+
+          if (route?.accepted_provider_id === offer.provider_id) {
+            const [{ data: lead, error: leadError }, { data: provider, error: providerError }] = await Promise.all([
+              admin.from('perception_microsite_leads').select('id,user_id,microsite_id').eq('id', offer.lead_id).maybeSingle(),
+              admin.from('perception_microsite_providers').select('id,display_name').eq('id', offer.provider_id).maybeSingle(),
+            ])
+            if (leadError) throw new Error(`accepted_lead_lookup:${leadError.code}`)
+            if (providerError) throw new Error(`accepted_provider_lookup:${providerError.code}`)
+
+            if (lead && provider) {
+              const { data: config, error: configError } = await admin
+                .from('perception_microsite_routing_configs')
+                .select('mode')
+                .eq('microsite_id', lead.microsite_id)
+                .maybeSingle()
+              if (configError) throw new Error(`accepted_config_lookup:${configError.code}`)
+              if (config) {
+                const rendered = renderHomeownerNotice('PROVIDER_ACCEPTED', {
+                  leadId: lead.id,
+                  acceptedProviderId: provider.id,
+                  providerName: provider.display_name,
+                  simulated: config.mode !== 'LIVE',
+                })
+                const delivery = await dispatchHomeownerNotice({
+                  leadId: lead.id,
+                  type: 'PROVIDER_ACCEPTED',
+                  rendered: { subject: rendered.subject, body: rendered.body },
+                }, config.mode)
+                const { error: eventError } = await admin.from('perception_microsite_lead_events').upsert({
+                  user_id: lead.user_id,
+                  lead_id: lead.id,
+                  route_id: route.id,
+                  offer_id: offer.id,
+                  event_type: 'homeowner.notice.provider_accepted',
+                  actor_source: 'microsite-provider-response',
+                  provider_id: provider.id,
+                  idempotency_key: `notice:provider-accepted:${lead.id}`,
+                  metadata: { type: 'PROVIDER_ACCEPTED', delivery },
+                  practice: route.practice,
+                }, { onConflict: 'lead_id,idempotency_key', ignoreDuplicates: true })
+                if (eventError) throw new Error(`accepted_notice_event:${eventError.code}`)
+              }
+            }
+          }
+        }
+      }
+    }
+
     return json(result.body, result.statusCode)
   } catch {
     // Raw one-off tokens are never logged.
