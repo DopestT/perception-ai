@@ -85,6 +85,7 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/018_microsite_rate_limit_client_deny.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/019_microsite_foreign_key_indexes.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261009173500_hagerstown_well_help_routing.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261009192400_hagerstown_well_help_outcomes_metrics.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/021_runtime_v02_ledgers.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/022_runtime_v02_operational_wiring.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/023_runtime_v02_continuation_route.sql
