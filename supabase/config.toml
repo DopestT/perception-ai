@@ -3,3 +3,8 @@
 # server-to-server webhook with its own constant-time shared-token check.
 [functions.datacenter-forums-bridge]
 verify_jwt = false
+
+# Provider responses are authenticated by a scoped, expiring HMAC offer token.
+# The function never accepts a broad bearer credential or exposes service-role access.
+[functions.microsite-provider-response]
+verify_jwt = false

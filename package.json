@@ -8,7 +8,8 @@
     "test": "vitest run",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "test:sovereignty": "node scripts/sovereignty-gate.mjs"
+    "test:sovereignty": "node scripts/sovereignty-gate.mjs",
+    "practice:hwh": "node scripts/hagerstown-well-help-practice.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "latest",

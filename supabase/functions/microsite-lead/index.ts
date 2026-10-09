@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { buildMicrositeLeadIdentity } from "../_shared/microsite-intake.ts";
 
 const SITE_DOMAIN = "hagerstownbasementwaterproofing.com";
 const allowedOrigins = new Set([
@@ -91,7 +92,10 @@ Deno.serve(async (req: Request) => {
 
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  if (!serviceKey || !supabaseUrl) return json(origin, { ok: false, error: "unavailable" }, 503);
+  const fingerprintSecret = Deno.env.get("MICROSITE_LEAD_FINGERPRINT_SECRET");
+  if (!serviceKey || !supabaseUrl || !fingerprintSecret) {
+    return json(origin, { ok: false, error: "unavailable" }, 503);
+  }
 
   const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
   const { data: microsite, error: siteError } = await supabase
@@ -123,7 +127,7 @@ Deno.serve(async (req: Request) => {
   const count = Number(rateRow?.submission_count || 0);
   if (count >= 5) return json(origin, { ok: false, error: "rate_limited" }, 429);
 
-  await supabase.from("perception_microsite_lead_rate_limits").upsert({
+  const { error: rateError } = await supabase.from("perception_microsite_lead_rate_limits").upsert({
     microsite_id: microsite.id,
     network_hash: networkHash,
     hour_bucket: hourBucket,
@@ -131,12 +135,31 @@ Deno.serve(async (req: Request) => {
     updated_at: new Date().toISOString(),
   }, { onConflict: "microsite_id,network_hash,hour_bucket" });
 
-  const { error: insertError } = await supabase.from("perception_microsite_leads").insert({
-    user_id: microsite.user_id,
-    microsite_id: microsite.id,
-    channel: "FORM",
-    source_path: sourcePath,
-    metadata: {
+  if (rateError) {
+    console.error("microsite_rate_limit_write_failed", rateError.code);
+    return json(origin, { ok: false, error: "unavailable" }, 503);
+  }
+
+  let identity;
+  try {
+    identity = await buildMicrositeLeadIdentity({
+      secret: fingerprintSecret,
+      micrositeId: microsite.id,
+      phone: phone || "",
+      email: email || "",
+      zip: zip || "",
+      issue: issue || "",
+    });
+  } catch {
+    return json(origin, { ok: false, error: "unavailable" }, 503);
+  }
+
+  const { data: ingestResult, error: ingestError } = await supabase.rpc("perception_ingest_microsite_lead", {
+    p_user_id: microsite.user_id,
+    p_microsite_id: microsite.id,
+    p_channel: "FORM",
+    p_source_path: sourcePath,
+    p_metadata: {
       name,
       phone,
       email,
@@ -145,12 +168,22 @@ Deno.serve(async (req: Request) => {
       consent_version: "2026-09-13-v1",
       site_domain: SITE_DOMAIN,
     },
+    p_phone_hash: identity.phoneHash,
+    p_email_hash: identity.emailHash,
+    p_submission_fingerprint: identity.submissionFingerprint,
+    p_duplicate_window_minutes: 30,
   });
 
-  if (insertError) {
-    console.error("microsite_lead_insert_failed", insertError.code);
+  if (ingestError || !ingestResult || typeof ingestResult !== "object") {
+    console.error("microsite_lead_ingest_failed", ingestError?.code || "invalid_result");
     return json(origin, { ok: false, error: "unavailable" }, 503);
   }
 
-  return json(origin, { ok: true });
+  const result = ingestResult as Record<string, unknown>;
+  return json(origin, {
+    ok: true,
+    lead_id: typeof result.lead_id === "string" ? result.lead_id : undefined,
+    duplicate: result.duplicate === true,
+    manual_review: result.manual_review === true,
+  });
 });

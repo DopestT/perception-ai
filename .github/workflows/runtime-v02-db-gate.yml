@@ -80,6 +80,12 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/003_perception_verified_vertical_slice.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/004_perception_runtime_api_hardening.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/005_perception_worker_artifact_index.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/013_microsite_portfolio.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/017_microsite_lead_ingest.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/018_microsite_rate_limit_client_deny.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/019_microsite_foreign_key_indexes.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261009173500_hagerstown_well_help_routing.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261009192400_hagerstown_well_help_outcomes_metrics.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/021_runtime_v02_ledgers.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/022_runtime_v02_operational_wiring.sql
           psql -v ON_ERROR_STOP=1 -f supabase/migrations/023_runtime_v02_continuation_route.sql
@@ -107,3 +113,4 @@ jobs:
           psql -v ON_ERROR_STOP=1 -f supabase/tests/runtime_v11_external_presearch_gate.sql
           psql -v ON_ERROR_STOP=1 -f supabase/tests/growth_operator_v01_gate.sql
           psql -v ON_ERROR_STOP=1 -f supabase/tests/sovereign_storage_gate.sql
+          psql -v ON_ERROR_STOP=1 -f supabase/tests/hagerstown_well_help_routing_gate.sql
