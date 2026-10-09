@@ -13,6 +13,19 @@ const payload = {
 }
 const beforeExpiry = new Date('2026-10-09T19:00:00.000Z')
 
+function decodeBase64UrlText(value: string) {
+  const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4)
+  const binary = atob(padded)
+  return new TextDecoder().decode(Uint8Array.from(binary, (char) => char.charCodeAt(0)))
+}
+
+function encodeBase64UrlText(value: string) {
+  const bytes = new TextEncoder().encode(value)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
 describe('microsite offer tokens', () => {
   it('signs deterministically and verifies the exact bounded payload', async () => {
     const a = await signOfferToken(payload, SECRET)
@@ -26,10 +39,10 @@ describe('microsite offer tokens', () => {
   it('rejects payload tampering, including another offer or route', async () => {
     const token = await signOfferToken(payload, SECRET)
     const [encoded, signature] = token.split('.')
-    const decoded = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'))
+    const decoded = JSON.parse(decodeBase64UrlText(encoded))
     decoded.offerId = 'offer-2'
     decoded.routeId = 'route-2'
-    const tamperedPayload = Buffer.from(JSON.stringify(decoded)).toString('base64url')
+    const tamperedPayload = encodeBase64UrlText(JSON.stringify(decoded))
 
     await expect(verifyOfferToken(`${tamperedPayload}.${signature}`, SECRET, beforeExpiry)).resolves.toEqual({
       ok: false,
