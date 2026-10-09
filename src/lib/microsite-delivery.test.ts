@@ -44,16 +44,30 @@ describe('microsite delivery boundary', () => {
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 
-  it('simulates homeowner notices without exposing a delivery connector', async () => {
+  it.each(['PRACTICE', 'LIVE_DISABLED'] as const)('simulates homeowner notices in %s without a network call', async (mode) => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
     const result = await dispatchHomeownerNotice({
       leadId: 'lead-1',
       type: 'REQUEST_RECEIVED',
       rendered: { subject: 'Request received', body: 'We received your request.' },
-    }, 'PRACTICE')
+    }, mode)
 
     expect(result.status).toBe('SIMULATED')
+    expect(result.simulated).toBe(true)
     expect(result.metadata).toEqual(expect.objectContaining({ type: 'REQUEST_RECEIVED' }))
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('blocks homeowner notice delivery in LIVE until an adapter is installed', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    const result = await dispatchHomeownerNotice({
+      leadId: 'lead-1',
+      type: 'REQUEST_RECEIVED',
+      rendered: { subject: 'Request received', body: 'We received your request.' },
+    }, 'LIVE')
+
+    expect(result.status).toBe('BLOCKED')
+    expect(result.simulated).toBe(false)
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 })
