@@ -60,6 +60,7 @@ begin
   if to_regprocedure('public.perception_accept_microsite_offer(uuid,text)') is null then raise exception 'missing accept rpc'; end if;
   if to_regprocedure('public.perception_transition_microsite_lead(uuid,text,text,uuid,jsonb,text)') is null then raise exception 'missing transition rpc'; end if;
   if to_regprocedure('public.perception_exhaust_microsite_route(uuid,text)') is null then raise exception 'missing exhaust rpc'; end if;
+  if to_regprocedure('public.perception_get_microsite_routing_metrics(uuid,timestamp with time zone)') is null then raise exception 'missing routing metrics rpc'; end if;
 end $$;
 
 -- Behavioral contract.
@@ -78,12 +79,15 @@ declare
   o1 uuid;
   o2 uuid;
   j jsonb;
+  transition_failed boolean := false;
 begin
   insert into auth.users(id,email) values (u,'hwh-test@example.com');
   insert into public.perception_microsite_portfolios(id,user_id,vertical,target_sites,status)
     values (p,u,'well-help',1,'building');
   insert into public.perception_microsites(id,user_id,portfolio_id,primary_service,status)
     values (s,u,p,'well-help','building');
+  insert into public.perception_microsite_routing_configs(user_id,microsite_id,program_key,mode,outbound_enabled)
+    values (u,s,'hagerstown-well-help','PRACTICE',false);
 
   insert into public.perception_microsite_providers(
     id,user_id,display_name,status,service_keys,service_areas,emergency_capable,accepting_new_work,routing_channel,routing_destination,priority_bias
@@ -121,7 +125,25 @@ begin
   j := public.perception_accept_microsite_offer(o1,'accept-a');
   if j->>'status' <> 'accepted' then raise exception 'repeated accept not idempotent'; end if;
 
-  -- Separate lead exercises PASS/EXPIRED/DELIVERY_FAILED and exhaustion.
+  -- Outcome state rules are forward-only.
+  j := public.perception_transition_microsite_lead(l1,'CONTACTED','homeowner.contacted',a,'{}','contacted-1');
+  if j->>'state' <> 'CONTACTED' then raise exception 'accepted -> contacted failed'; end if;
+  j := public.perception_transition_microsite_lead(l1,'APPOINTMENT','appointment.confirmed',a,'{}','appointment-1');
+  if j->>'state' <> 'APPOINTMENT' then raise exception 'contacted -> appointment failed'; end if;
+  begin
+    perform public.perception_transition_microsite_lead(l1,'CONTACTED','bad.backwards',a,'{}','backwards-1');
+  exception when others then
+    transition_failed := true;
+  end;
+  if not transition_failed then raise exception 'backwards outcome transition was accepted'; end if;
+  j := public.perception_transition_microsite_lead(l1,'COMPLETED','job.completed',a,'{}','completed-1');
+  if j->>'state' <> 'COMPLETED' then raise exception 'appointment -> completed failed'; end if;
+
+  -- Practice revenue is evidence only and must be excluded from live metrics.
+  insert into public.perception_microsite_revenue(user_id,microsite_id,lead_id,provider_id,model,amount_cents,metadata)
+  values (u,s,l1,a,'PAY_PER_LEAD',12345,'{"practice":true,"simulated":true}');
+
+  -- Separate lead exercises PASS/EXPIRED and exhaustion.
   j := public.perception_ingest_microsite_lead(u,s,'FORM','/request','{"zip":"21740","issue":"no water again"}','ph2','eh2','fp3',30);
   l2 := (j->>'lead_id')::uuid;
   update public.perception_microsite_leads set state='QUALIFIED', service_key='NO_WATER', urgency='EMERGENCY' where id=l2;
@@ -137,6 +159,21 @@ begin
   j := public.perception_exhaust_microsite_route(r2,'exhaust-2');
   if j->>'status' <> 'exhausted' then raise exception 'route exhaustion failed'; end if;
   if (select state from public.perception_microsite_leads where id=l2) <> 'UNROUTABLE' then raise exception 'lead not marked UNROUTABLE'; end if;
+
+  perform set_config('request.jwt.claim.sub', u::text, true);
+  j := public.perception_get_microsite_routing_metrics(s, now()-interval '1 day');
+  if not (j ? 'qualification_rate' and j ? 'duplicate_rate' and j ? 'median_time_to_first_offer_seconds'
+    and j ? 'median_time_to_acceptance_seconds' and j ? 'provider_acceptance_rate'
+    and j ? 'route_exhaustion_rate' and j ? 'appointment_rate' and j ? 'completion_rate'
+    and j ? 'lead_to_revenue_rate' and j ? 'practice') then
+    raise exception 'metrics payload missing required keys: %', j;
+  end if;
+  if coalesce((j->>'lead_to_revenue_rate')::numeric,0) <> 0 then
+    raise exception 'practice revenue contaminated live metrics: %', j;
+  end if;
+  if coalesce((j->'practice'->>'route_count')::integer,0) < 2 then
+    raise exception 'practice diagnostics did not include practice routes: %', j;
+  end if;
 end $$;
 
 rollback;
