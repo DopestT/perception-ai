@@ -5,6 +5,7 @@ import {
 } from '../_shared/microsite-provider-response.ts'
 import { dispatchHomeownerNotice } from '../_shared/microsite-delivery.ts'
 import { renderHomeownerNotice } from '../_shared/microsite-routing.ts'
+import { verifyOfferToken } from '../_shared/microsite-offer-token.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -66,13 +67,6 @@ Deno.serve(async (req: Request) => {
     const result = await handleMicrositeProviderResponse({ token, response }, repo, secret)
 
     if (result.body.status === 'accepted') {
-      const verified = await repo.getOffer((await import('../_shared/microsite-offer-token.ts')).then ? '' : '')
-      void verified
-    }
-
-    if (result.body.status === 'accepted') {
-      // Derive the accepted offer from the token only after the scoped handler has verified it.
-      const { verifyOfferToken } = await import('../_shared/microsite-offer-token.ts')
       const verifiedToken = await verifyOfferToken(token, secret)
       if (verifiedToken.ok) {
         const { data: offer, error: offerError } = await admin
