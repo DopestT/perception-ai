@@ -12,8 +12,17 @@ import {
   type StartRouteInput,
   type TransitionLeadInput,
 } from '../_shared/microsite-router.ts'
-import type { DeliveryResult } from '../_shared/microsite-delivery.ts'
-import type { RoutingPerformance } from '../_shared/microsite-routing.ts'
+import {
+  dispatchHomeownerNotice,
+  type DeliveryResult,
+} from '../_shared/microsite-delivery.ts'
+import {
+  canTransitionRoutingLeadState,
+  renderHomeownerNotice,
+  type HomeownerNoticeType,
+  type RoutingLeadState,
+  type RoutingPerformance,
+} from '../_shared/microsite-routing.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -118,7 +127,6 @@ function makeRepository(admin: ReturnType<typeof createClient>): MicrositeRouter
     },
 
     async getProviderPerformance(_userId): Promise<Record<string, RoutingPerformance>> {
-      // Bootstrap routing has no observed performance history yet. Unknown history is neutral.
       return {}
     },
 
@@ -254,6 +262,52 @@ function makeRepository(admin: ReturnType<typeof createClient>): MicrositeRouter
   return repo
 }
 
+async function latestRouteForLead(admin: ReturnType<typeof createClient>, leadId: string) {
+  const { data, error } = await admin
+    .from('perception_microsite_lead_routes')
+    .select('id,practice,accepted_provider_id,route_status')
+    .eq('lead_id', leadId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error(`route lookup failed: ${error.code}`)
+  return data
+}
+
+async function recordHomeownerNotice(
+  admin: ReturnType<typeof createClient>,
+  lead: RouterLead,
+  config: RoutingConfig,
+  type: HomeownerNoticeType,
+  provider?: { id: string; displayName: string } | null,
+) {
+  const rendered = renderHomeownerNotice(type, {
+    leadId: lead.id,
+    acceptedProviderId: provider?.id ?? null,
+    providerName: provider?.displayName ?? null,
+    simulated: config.mode !== 'LIVE',
+  })
+  const delivery = await dispatchHomeownerNotice({
+    leadId: lead.id,
+    type,
+    rendered: { subject: rendered.subject, body: rendered.body },
+  }, config.mode)
+  const route = await latestRouteForLead(admin, lead.id)
+  const { error } = await admin.from('perception_microsite_lead_events').upsert({
+    user_id: lead.userId,
+    lead_id: lead.id,
+    route_id: route?.id ?? null,
+    event_type: `homeowner.notice.${type.toLowerCase()}`,
+    actor_source: 'microsite-router',
+    provider_id: provider?.id ?? null,
+    idempotency_key: `notice:${type.toLowerCase()}:${lead.id}`,
+    metadata: { type, delivery },
+    practice: route?.practice ?? delivery.simulated,
+  }, { onConflict: 'lead_id,idempotency_key', ignoreDuplicates: true })
+  if (error) throw new Error(`homeowner notice event failed: ${error.code}`)
+  return delivery
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405)
@@ -290,7 +344,14 @@ Deno.serve(async (req: Request) => {
       const lead = await repo.getLead(leadId)
       if (!lead) return json({ error: 'not_found' }, 404)
       if (lead.userId !== userData.user.id) return json({ error: 'forbidden' }, 403)
+      const config = await repo.getRoutingConfig(lead.micrositeId)
+      if (!config) return json({ error: 'routing_config_missing' }, 409)
+
       const result = await startMicrositeRouting(repo, leadId)
+      await recordHomeownerNotice(admin, lead, config, 'REQUEST_RECEIVED')
+      if (result.status === 'UNROUTABLE' || result.status === 'EXHAUSTED') {
+        await recordHomeownerNotice(admin, lead, config, 'NO_PROVIDER_SECURED')
+      }
       return json({ ok: true, result })
     }
 
@@ -302,16 +363,20 @@ Deno.serve(async (req: Request) => {
       const lead = await repo.getLead(route.leadId)
       if (!lead) return json({ error: 'not_found' }, 404)
       if (lead.userId !== userData.user.id) return json({ error: 'forbidden' }, 403)
+      const config = await repo.getRoutingConfig(lead.micrositeId)
+      if (!config) return json({ error: 'routing_config_missing' }, 409)
 
       let now = new Date()
       const requestedNow = safeText(body?.now, 80)
       if (requestedNow) {
-        const config = await repo.getRoutingConfig(lead.micrositeId)
-        if (!config || config.mode !== 'PRACTICE') return json({ error: 'custom_now_not_allowed' }, 400)
+        if (config.mode !== 'PRACTICE') return json({ error: 'custom_now_not_allowed' }, 400)
         now = new Date(requestedNow)
         if (Number.isNaN(now.getTime())) return json({ error: 'invalid_now' }, 400)
       }
       const result = await tickMicrositeRouting(repo, routeId, now)
+      if (result.status === 'EXHAUSTED') {
+        await recordHomeownerNotice(admin, lead, config, 'NO_PROVIDER_SECURED')
+      }
       return json({ ok: true, result })
     }
 
@@ -320,6 +385,7 @@ Deno.serve(async (req: Request) => {
       record_appointment: { state: 'APPOINTMENT', event: 'appointment.confirmed' },
       record_completed: { state: 'COMPLETED', event: 'job.completed' },
       record_lost: { state: 'LOST', event: 'job.lost' },
+      record_cancelled: { state: 'CANCELLED', event: 'request.cancelled' },
     }
     const outcome = outcomeStates[action]
     if (outcome) {
@@ -328,13 +394,48 @@ Deno.serve(async (req: Request) => {
       const lead = await repo.getLead(leadId)
       if (!lead) return json({ error: 'not_found' }, 404)
       if (lead.userId !== userData.user.id) return json({ error: 'forbidden' }, 403)
+      if (!canTransitionRoutingLeadState(lead.state as RoutingLeadState, outcome.state as RoutingLeadState)) {
+        return json({ error: 'invalid_transition', from: lead.state, to: outcome.state }, 409)
+      }
+
+      const route = await latestRouteForLead(admin, lead.id)
       await repo.transitionLead({
         leadId,
         nextState: outcome.state,
         eventType: outcome.event,
+        providerId: route?.accepted_provider_id ?? null,
         metadata: typeof body?.metadata === 'object' && body.metadata ? body.metadata as Record<string, unknown> : {},
         idempotencyKey: `${action}:${leadId}`,
       })
+
+      if (action === 'record_completed') {
+        if (!route?.accepted_provider_id) return json({ error: 'accepted_provider_required' }, 409)
+        if (route.practice !== true) return json({ error: 'live_revenue_not_enabled' }, 409)
+        const amountCandidate = Number(body?.amount_cents ?? 0)
+        const amountCents = Number.isInteger(amountCandidate) && amountCandidate >= 0 ? amountCandidate : 0
+        const modelCandidate = safeText(body?.model, 40)
+        const model = ['PAY_PER_LEAD','MONTHLY_LEASE','REVENUE_SHARE','HYBRID'].includes(modelCandidate)
+          ? modelCandidate
+          : 'PAY_PER_LEAD'
+        const { error: revenueError } = await admin.from('perception_microsite_revenue').insert({
+          user_id: lead.userId,
+          microsite_id: lead.micrositeId,
+          lead_id: lead.id,
+          provider_id: route.accepted_provider_id,
+          model,
+          amount_cents: amountCents,
+          metadata: { practice: true, simulated: true, source: 'microsite-router' },
+        })
+        if (revenueError) throw new Error(`practice revenue evidence failed: ${revenueError.code}`)
+      }
+
+      const config = await repo.getRoutingConfig(lead.micrositeId)
+      if (config) {
+        if (action === 'record_cancelled') await recordHomeownerNotice(admin, lead, config, 'REQUEST_CANCELLED')
+        if (action === 'record_completed' || action === 'record_lost') {
+          await recordHomeownerNotice(admin, lead, config, 'OUTCOME_FOLLOWUP')
+        }
+      }
       return json({ ok: true, state: outcome.state })
     }
 
