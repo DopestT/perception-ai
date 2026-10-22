@@ -198,6 +198,7 @@ function App() {
   const latestObjective = world?.objectives.at(-1) ?? null
   const canContinueObjective = Boolean(latestObjective && !['realized', 'superseded'].includes(latestObjective.status || ''))
   const verifiedEvidenceCount = world?.verifications.reduce((sum, verification) => sum + (verification.evidence?.length ?? 0), 0) ?? 0
+  const activeForecast = forecast && world && forecast.project_id === world.project.id ? forecast : null
 
   const loadLatestWorld = useCallback(async () => {
     const [latest, pendingApproval] = await Promise.all([
@@ -952,14 +953,14 @@ function App() {
       {world && (
         <section className="world-section result-section" id="project-world">
           <div className="result-intro">
-            <p className="section-kicker">{forecast ? 'PERCEPTION FORECAST' : 'PERCEPTION RESULT'}</p>
+            <p className="section-kicker">{activeForecast ? 'PERCEPTION FORECAST' : 'PERCEPTION RESULT'}</p>
             <h1>
-              {forecast
-                ? `${Math.round(forecast.current_probability * 100)}% — ${forecast.question}`
+              {activeForecast
+                ? `${Math.round(activeForecast.current_probability * 100)}% — ${activeForecast.question}`
                 : world.project.current_reality || world.project.name || 'Perception has a working view.'}
             </h1>
             <p className="result-summary">
-              {forecast
+              {activeForecast
                 ? `This is the current calibrated estimate, not a guarantee. Perception will only move it when new evidence justifies a revision.`
                 : latestObjective
                   ? `Perception understands the goal: ${latestObjective.statement}. ${world.project.current_reality || 'The route is active and will advance only when effects are verified.'}`
@@ -967,11 +968,11 @@ function App() {
             </p>
             <div className="result-actions">
               <button type="button" onClick={() => setResultDepth('depth')}>GO DEEPER</button>
-              {(forecast || canContinueObjective) && (
+              {(activeForecast || canContinueObjective) && (
                 <button
                   type="button"
                   className="result-action-primary"
-                  onClick={forecast ? handleRunIntelligence : handleContinueRoute}
+                  onClick={activeForecast ? handleRunIntelligence : handleContinueRoute}
                   disabled={busy || continuingRoute || runningIntelligence}
                 >
                   {busy || continuingRoute || runningIntelligence ? 'WORKING…' : 'TAKE THE NEXT STEP'}
@@ -986,27 +987,27 @@ function App() {
               <div className="result-depth-grid">
                 <article>
                   <p className="card-label">What Perception found</p>
-                  <h2>{forecast ? `${Math.round(forecast.current_probability * 100)}% current probability` : world.project.current_reality || 'A durable route is active.'}</h2>
-                  <p>{forecast ? `${verifiedEvidenceCount} verification evidence item${verifiedEvidenceCount === 1 ? '' : 's'} are currently recorded.` : `${verifiedEvidenceCount} verification evidence item${verifiedEvidenceCount === 1 ? '' : 's'} are attached to this Project World.`}</p>
+                  <h2>{activeForecast ? `${Math.round(activeForecast.current_probability * 100)}% current probability` : world.project.current_reality || 'A durable route is active.'}</h2>
+                  <p>{activeForecast ? `${verifiedEvidenceCount} verification evidence item${verifiedEvidenceCount === 1 ? '' : 's'} are currently recorded.` : `${verifiedEvidenceCount} verification evidence item${verifiedEvidenceCount === 1 ? '' : 's'} are attached to this Project World.`}</p>
                 </article>
                 <article>
                   <p className="card-label">What it means</p>
-                  <h2>{world.verifications.at(-1)?.passed ? 'The latest bounded effect is verified.' : forecast ? 'Confidence should stay provisional.' : 'The objective is still in progress.'}</h2>
-                  <p>{forecast ? 'Probability can change as independent evidence, base rates, and resolved outcomes arrive.' : 'Perception separates what is known, inferred, attempted, and verified before it changes current reality.'}</p>
+                  <h2>{world.verifications.at(-1)?.passed ? 'The latest bounded effect is verified.' : activeForecast ? 'Confidence should stay provisional.' : 'The objective is still in progress.'}</h2>
+                  <p>{activeForecast ? 'Probability can change as independent evidence, base rates, and resolved outcomes arrive.' : 'Perception separates what is known, inferred, attempted, and verified before it changes current reality.'}</p>
                 </article>
                 <article>
                   <p className="card-label">What should happen next</p>
-                  <h2>{forecast ? 'Run fresh intelligence when the evidence changes.' : canContinueObjective ? 'Continue the same route.' : 'Review the evidence and decide what to pursue next.'}</h2>
-                  <p>{forecast ? 'Perception can scan for new signals without rewriting earlier probability versions.' : 'The next action stays inside this Project World so history, permissions, and verification remain intact.'}</p>
+                  <h2>{activeForecast ? 'Run fresh intelligence when the evidence changes.' : canContinueObjective ? 'Continue the same route.' : 'Review the evidence and decide what to pursue next.'}</h2>
+                  <p>{activeForecast ? 'Perception can scan for new signals without rewriting earlier probability versions.' : 'The next action stays inside this Project World so history, permissions, and verification remain intact.'}</p>
                 </article>
               </div>
 
               <div className="result-inspectors">
                 <details>
                   <summary>Details</summary>
-                  {forecast ? (
+                  {activeForecast ? (
                     <ForecastPanel
-                      forecast={forecast}
+                      forecast={activeForecast}
                       calibration={calibration}
                       resolving={resolvingForecast}
                       attachingMarket={attachingMarket}
