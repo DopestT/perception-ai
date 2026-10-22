@@ -3,7 +3,6 @@ import ReactDOM from 'react-dom/client'
 import { Analytics } from '@vercel/analytics/react'
 import App from './App'
 import { FrontDoorBoundary } from './FrontDoorBoundary'
-import { TokenEfficiencyPanel } from './TokenEfficiencyPanel'
 import './styles.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -11,7 +10,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <FrontDoorBoundary>
       <App />
     </FrontDoorBoundary>
-    <TokenEfficiencyPanel />
     <Analytics />
   </React.StrictMode>,
 )
