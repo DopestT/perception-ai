@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const appSource = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8')
 const mainSource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
+const plasmaSource = readFileSync(new URL('./PlasmaPortal.tsx', import.meta.url), 'utf8')
 
 function section(source: string, start: string, end: string) {
   const from = source.indexOf(start)
@@ -40,5 +41,11 @@ describe('consumer homepage contract', () => {
   it('keeps token controls out of the globally mounted consumer shell', () => {
     expect(mainSource).not.toContain('<TokenEfficiencyPanel />')
     expect(appSource).toContain('<TokenEfficiencyPanel />')
+  })
+
+  it('recovers the animated background when WebGL is interrupted', () => {
+    expect(plasmaSource).toContain('webglcontextlost')
+    expect(plasmaSource).toContain('webglcontextrestored')
+    expect(plasmaSource).toContain('preventDefault()')
   })
 })
