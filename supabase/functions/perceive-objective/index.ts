@@ -1619,6 +1619,11 @@ Deno.serve(async (req: Request) => {
 
       for (const decision of capabilityRouting.filter((candidate) => candidate.executionMode === 'external')) {
         const routeNode = routePlan.nodes.find((node) => node.key === decision.nodeKey)
+        const continuationIndex = continuationPlanNodes.findIndex((candidate) => candidate.key === decision.nodeKey)
+        const expectedSortOrder = continuationIndex >= 0 ? continuationIndex + 1 : null
+        const routeNodeId = expectedSortOrder === null
+          ? null
+          : (persistedRouteNodes.data ?? []).find((candidate) => candidate.sort_order === expectedSortOrder)?.id ?? null
         let actionContract: ReturnType<typeof buildGitHubActionContract> | null = null
 
         if (decision.adapter === 'github-operator' && routeNode) {
@@ -1926,6 +1931,8 @@ Deno.serve(async (req: Request) => {
           })
           actionContracts.push(actionContract)
         }
+
+        const routingStatus = actionContract?.status ?? decision.status
 
         const { error: intentError } = await admin.from('perception_execution_ledger').insert({
           user_id: userData.user.id,
