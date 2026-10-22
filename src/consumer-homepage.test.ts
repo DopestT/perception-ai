@@ -48,4 +48,26 @@ describe('consumer homepage contract', () => {
     expect(plasmaSource).toContain('webglcontextrestored')
     expect(plasmaSource).toContain('preventDefault()')
   })
+
+  it('progressively reveals result depth instead of dumping system internals', () => {
+    for (const label of [
+      'GO DEEPER',
+      'TAKE THE NEXT STEP',
+      'SHOW ME THE EVIDENCE',
+      'What Perception found',
+      'What it means',
+      'What should happen next',
+      'Details',
+      'Evidence',
+      'Activity',
+      'System',
+    ]) {
+      expect(appSource).toContain(label)
+    }
+  })
+
+  it('validates forecast-shaped input before opening a forecast', () => {
+    expect(appSource).toContain('resolveForecastInput(statement, forecastDeadline)')
+    expect(appSource).toContain('resolveFrontDoorInput(statement)')
+  })
 })
