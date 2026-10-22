@@ -59,7 +59,7 @@ describe('forecast intake', () => {
     })
     expect(resolveForecastInput('Tell me about the bill', '2026-10-30')).toEqual({
       kind: 'conversation',
-      message: 'Forecasts need a future yes/no or measurable outcome. Try: “Will X happen by this date?”',
+      message: 'That sounds like a question, not a forecast. Use SEARCH or ask what future event you want Perception to predict.',
     })
   })
 })
