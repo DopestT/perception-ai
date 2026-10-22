@@ -24,8 +24,5 @@
   "include": [
     "src"
   ],
-  "references": [],
-  "exclude": [
-    "src/consumer-homepage.test.ts"
-  ]
+  "references": []
 }
