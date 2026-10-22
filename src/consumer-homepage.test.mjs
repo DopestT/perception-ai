@@ -70,4 +70,10 @@ describe('consumer homepage contract', () => {
     expect(appSource).toContain('resolveForecastInput(statement, forecastDeadline)')
     expect(appSource).toContain('resolveFrontDoorInput(statement)')
   })
+
+  it('never mixes a forecast with a different Project World', () => {
+    expect(appSource).toContain('forecast.project_id === world.project.id')
+    expect(appSource).toContain('const activeForecast')
+    expect(appSource).not.toContain('{forecast ? (')
+  })
 })
