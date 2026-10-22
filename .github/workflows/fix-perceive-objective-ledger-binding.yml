@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   patch-and-verify:
-    if: github.actor != 'github-actions[bot]'
+    if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -23,8 +23,9 @@ jobs:
           node-version: 22
 
       - name: Restore missing capability ledger bindings
-        shell: python
+        shell: bash
         run: |
+          python - <<'PY'
           from pathlib import Path
 
           path = Path('supabase/functions/perceive-objective/index.ts')
@@ -65,6 +66,7 @@ jobs:
           text = text.replace(route_anchor, route_replacement, 1)
           text = text.replace(status_anchor, status_replacement, 1)
           path.write_text(text)
+          PY
 
       - name: Verify regression and full test suite
         run: |
