@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export type PlasmaMode = 'idle' | 'hover' | 'focused' | 'typing' | 'charging' | 'absorbing' | 'auth' | 'transitioning'
 export type ExperienceMode = 'discover' | 'perceive' | 'search' | 'forecast'
@@ -15,6 +15,8 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
   const modeRef = useRef(mode)
   const experienceRef = useRef(experienceMode)
   const energyRef = useRef(energy)
+  const [contextVersion, setContextVersion] = useState(0)
+  const [contextLost, setContextLost] = useState(false)
 
   useEffect(() => { modeRef.current = mode }, [mode])
   useEffect(() => { experienceRef.current = experienceMode }, [experienceMode])
@@ -23,8 +25,31 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
+
+    let raf = 0
+    const onContextLost = (event: Event) => {
+      event.preventDefault()
+      setContextLost(true)
+      cancelAnimationFrame(raf)
+    }
+    const onContextRestored = () => {
+      setContextLost(false)
+      setContextVersion((version) => version + 1)
+    }
+    canvas.addEventListener('webglcontextlost', onContextLost)
+    canvas.addEventListener('webglcontextrestored', onContextRestored)
+
+    const removeContextListeners = () => {
+      canvas.removeEventListener('webglcontextlost', onContextLost)
+      canvas.removeEventListener('webglcontextrestored', onContextRestored)
+    }
+
     const gl = canvas.getContext('webgl', { antialias: false, alpha: true, premultipliedAlpha: false })
-    if (!gl) return
+    if (!gl) {
+      setContextLost(true)
+      return removeContextListeners
+    }
+    setContextLost(false)
 
     const vertexSource = `
       attribute vec2 aPosition;
@@ -153,14 +178,26 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
 
     const vertex = compile(gl.VERTEX_SHADER, vertexSource)
     const fragment = compile(gl.FRAGMENT_SHADER, fragmentSource)
-    if (!vertex || !fragment) return
+    if (!vertex || !fragment) {
+      setContextLost(true)
+      return removeContextListeners
+    }
 
     const program = gl.createProgram()
-    if (!program) return
+    if (!program) {
+      setContextLost(true)
+      return removeContextListeners
+    }
     gl.attachShader(program, vertex)
     gl.attachShader(program, fragment)
     gl.linkProgram(program)
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      setContextLost(true)
+      gl.deleteProgram(program)
+      gl.deleteShader(vertex)
+      gl.deleteShader(fragment)
+      return removeContextListeners
+    }
     gl.useProgram(program)
 
     const buffer = gl.createBuffer()
@@ -179,7 +216,6 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
     const authUniform = gl.getUniformLocation(program, 'uAuth')
     const experienceUniform = gl.getUniformLocation(program, 'uExperience')
 
-    let raf = 0
     let start = performance.now()
     let px = 0.5
     let py = 0.5
@@ -216,7 +252,7 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
 
     const render = (now: number) => {
       raf = requestAnimationFrame(render)
-      if (!visible) return
+      if (!visible || gl.isContextLost()) return
       resize()
       const dt = Math.min((now - start) / 1000, 0.032)
       start = now
@@ -250,12 +286,15 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
       cancelAnimationFrame(raf)
       window.removeEventListener('pointermove', onPointer)
       document.removeEventListener('visibilitychange', onVisibility)
-      gl.deleteBuffer(buffer)
-      gl.deleteProgram(program)
-      gl.deleteShader(vertex)
-      gl.deleteShader(fragment)
+      removeContextListeners()
+      if (!gl.isContextLost()) {
+        gl.deleteBuffer(buffer)
+        gl.deleteProgram(program)
+        gl.deleteShader(vertex)
+        gl.deleteShader(fragment)
+      }
     }
-  }, [])
+  }, [contextVersion])
 
-  return <canvas ref={canvasRef} className="plasma-canvas" aria-hidden="true" />
+  return <canvas ref={canvasRef} className={contextLost ? 'plasma-canvas plasma-canvas--lost' : 'plasma-canvas'} aria-hidden="true" />
 }

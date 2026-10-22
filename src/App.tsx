@@ -3,7 +3,9 @@ import { Check, Clock3, Compass, KeyRound, LogOut, Search, ShieldCheck, Sparkles
 import type { Session } from '@supabase/supabase-js'
 import { ForecastPanel } from './ForecastPanel'
 import { GrowthOperatorPanel } from './GrowthOperatorPanel'
+import { TokenEfficiencyPanel } from './TokenEfficiencyPanel'
 import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPortal'
+import { resolveForecastInput, resolveFrontDoorInput } from './lib/front-door-intake'
 import {
   attachKalshiMarketSignal,
   backendConfigured,
@@ -75,6 +77,14 @@ const forecastExperience = {
   placeholder: 'Will this happen by the resolution date?',
   action: 'FORECAST',
 }
+
+const starterActions: Array<{ label: string; mode: ExperienceMode; prompt: string }> = [
+  { label: 'Plan something', mode: 'perceive', prompt: 'Help me plan ' },
+  { label: 'Research something', mode: 'search', prompt: 'Research ' },
+  { label: 'Build something', mode: 'perceive', prompt: 'Help me build ' },
+  { label: 'Solve a problem', mode: 'perceive', prompt: 'Help me solve ' },
+  { label: 'Forecast an outcome', mode: 'forecast', prompt: 'Will ' },
+]
 
 function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms))
@@ -169,6 +179,9 @@ function App() {
   const [experienceMode, setExperienceMode] = useState<ExperienceMode>('perceive')
   const [portalMode, setPortalMode] = useState<PlasmaMode>('idle')
   const [typingEnergy, setTypingEnergy] = useState(0)
+  const [resultDepth, setResultDepth] = useState<'summary' | 'depth'>('summary')
+  const [showEvidence, setShowEvidence] = useState(false)
+  const [showSystem, setShowSystem] = useState(false)
   const resumeInFlight = useRef(false)
   const typingTimer = useRef<number | null>(null)
   const intentShadowTimer = useRef<number | null>(null)
@@ -182,6 +195,9 @@ function App() {
     experienceMode === 'forecast'
       ? forecastExperience
       : experienceModes.find((mode) => mode.id === experienceMode) ?? experienceModes[1]
+  const latestObjective = world?.objectives.at(-1) ?? null
+  const canContinueObjective = Boolean(latestObjective && !['realized', 'superseded'].includes(latestObjective.status || ''))
+  const verifiedEvidenceCount = world?.verifications.reduce((sum, verification) => sum + (verification.evidence?.length ?? 0), 0) ?? 0
 
   const loadLatestWorld = useCallback(async () => {
     const [latest, pendingApproval] = await Promise.all([
@@ -242,6 +258,9 @@ function App() {
       setRuntimeResult(result)
       setWorld(nextWorld)
       setLedgers(nextLedgers)
+      setResultDepth('summary')
+      setShowEvidence(false)
+      setShowSystem(false)
       clearPendingObjective()
       setInput('')
       setPortalMode('transitioning')
@@ -312,11 +331,20 @@ function App() {
 
   const processForecast = useCallback(async (question: string, deadline: string) => {
     if (resumeInFlight.current) return
-    if (!deadline) {
+    const forecastIntake = resolveForecastInput(question, deadline)
+    if (forecastIntake.kind === 'ignore') return
+    if (forecastIntake.kind === 'conversation') {
+      setError('')
+      setNotice(forecastIntake.message)
+      setPortalMode('focused')
+      return
+    }
+    if (!forecastIntake.deadline) {
       setError('Choose a resolution date for this forecast.')
       return
     }
-    const deadlineDate = new Date(`${deadline}T23:59:59`)
+    const resolvedQuestion = forecastIntake.question
+    const deadlineDate = new Date(`${forecastIntake.deadline}T23:59:59`)
     if (Number.isNaN(deadlineDate.getTime()) || deadlineDate.getTime() <= Date.now()) {
       setError('Forecast resolution date must be in the future.')
       return
@@ -331,7 +359,7 @@ function App() {
     setPortalMode('charging')
 
     try {
-      const request = createForecast(question, deadlineDate.toISOString(), 0.5)
+      const request = createForecast(resolvedQuestion, deadlineDate.toISOString(), 0.5)
       await delay(280)
       setPortalMode('absorbing')
       const result = await request
@@ -347,6 +375,9 @@ function App() {
       setCalibration(nextCalibration)
       setWorld(nextWorld)
       setLedgers(nextLedgers)
+      setResultDepth('summary')
+      setShowEvidence(false)
+      setShowSystem(false)
       clearPendingObjective()
       setInput('')
       setPortalMode('transitioning')
@@ -450,10 +481,31 @@ function App() {
     intentShadowAbort.current = null
     intentShadowGeneration.current += 1
 
-    if (!session) {
-      savePendingObjective(statement, experienceMode, experienceMode === 'forecast' ? forecastDeadline : undefined)
+    const frontDoor = resolveFrontDoorInput(statement)
+    if (frontDoor.kind === 'ignore') return
+    if (frontDoor.kind === 'conversation') {
       setError('')
-      setNotice('Sign in once to execute this objective and keep its Project World.')
+      setNotice(frontDoor.message)
+      setPortalMode('focused')
+      return
+    }
+
+    if (experienceMode === 'forecast') {
+      const forecastIntake = resolveForecastInput(statement, forecastDeadline)
+      if (forecastIntake.kind !== 'forecast') {
+        if (forecastIntake.kind === 'conversation') {
+          setError('')
+          setNotice(forecastIntake.message)
+          setPortalMode('focused')
+        }
+        return
+      }
+    }
+
+    if (!session) {
+      savePendingObjective(frontDoor.statement, experienceMode, experienceMode === 'forecast' ? forecastDeadline : undefined)
+      setError('')
+      setNotice('Sign in once to continue and keep your work across devices.')
       setAuthMode('signup')
       setPortalMode('auth')
       setAuthOpen(true)
@@ -461,10 +513,10 @@ function App() {
     }
 
     if (experienceMode === 'forecast') {
-      await processForecast(statement, forecastDeadline)
+      await processForecast(frontDoor.statement, forecastDeadline)
       return
     }
-    await processObjective(statement)
+    await processObjective(frontDoor.statement)
   }
 
   const requestSignIn = async (event: FormEvent) => {
@@ -809,13 +861,12 @@ function App() {
         </button>
         {session ? (
           <div className="account-actions">
-            <button className="quiet-action" type="button" onClick={handlePrepareOperatorProof} disabled={runningOperatorTest || busy}>
-              {runningOperatorTest ? 'PREPARING…' : 'PREPARE OPERATOR PROOF'}
-            </button>
-            <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth' })}>PROJECT WORLD</button>
-            <button className="quiet-action" type="button" onClick={handleRegisterPasskey} disabled={registeringPasskey}>
-              {registeringPasskey ? 'ADDING PASSKEY…' : 'ENABLE PASSKEY'}
-            </button>
+            <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>MY WORK</button>
+            <button className="quiet-action" type="button" onClick={() => {
+              setResultDepth('depth')
+              setShowSystem(true)
+              window.setTimeout(() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
+            }}>SYSTEM</button>
             <button className="icon-action" type="button" onClick={logout} aria-label="Sign out"><LogOut size={15} /></button>
           </div>
         ) : (
@@ -830,7 +881,8 @@ function App() {
           <div className="portal-reflection" aria-hidden="true" />
 
           <div className="hero-content">
-            <p className="hero-kicker">{activeExperience.invitation}</p>
+            <p className="hero-kicker">Tell Perception what you want to make real.</p>
+            <p className="hero-support">Perception understands the goal, builds a route, takes approved action, and verifies what actually changed.</p>
             <div className="experience-switcher" role="group" aria-label="Choose how Perception helps">
               {experienceModes.map((mode) => (
                 <button
@@ -845,18 +897,7 @@ function App() {
                 </button>
               ))}
             </div>
-            <div className="capability-launcher">
-              <button
-                type="button"
-                className={experienceMode === 'forecast' ? 'capability-link capability-link--active' : 'capability-link'}
-                onClick={() => selectExperienceMode(experienceMode === 'forecast' ? 'perceive' : 'forecast')}
-                disabled={busy}
-                aria-pressed={experienceMode === 'forecast'}
-              >
-                <Clock3 size={12} />
-                <span>{experienceMode === 'forecast' ? 'FORECAST WORKSPACE · EXIT' : 'SPECIALIZED · FORECAST'}</span>
-              </button>
-            </div>
+            <p className="hero-mode-line">{activeExperience.invitation}</p>
             <form className="hero-input-shell" onSubmit={submit}>
               <input
                 value={input}
@@ -878,6 +919,29 @@ function App() {
                 <input id="forecast-deadline" type="date" value={forecastDeadline} min={new Date(Date.now() + 86400000).toISOString().slice(0, 10)} onChange={(event) => setForecastDeadline(event.target.value)} disabled={busy} />
               </div>
             )}
+            <div className="starter-actions" aria-label="Quick ways to start">
+              {starterActions.map((starter) => (
+                <button key={starter.label} type="button" className="starter-action" onClick={() => {
+                  if (starter.mode !== experienceMode) selectExperienceMode(starter.mode)
+                  setInput(starter.prompt)
+                  setPortalMode('focused')
+                }} disabled={busy}>
+                  {starter.label}
+                </button>
+              ))}
+            </div>
+            <div className="capability-launcher">
+              <button
+                type="button"
+                className={experienceMode === 'forecast' ? 'capability-link capability-link--active' : 'capability-link'}
+                onClick={() => selectExperienceMode(experienceMode === 'forecast' ? 'perceive' : 'forecast')}
+                disabled={busy}
+                aria-pressed={experienceMode === 'forecast'}
+              >
+                <Clock3 size={12} />
+                <span>{experienceMode === 'forecast' ? 'FORECAST WORKSPACE · EXIT' : 'SPECIALIZED · FORECAST'}</span>
+              </button>
+            </div>
             <p className="track-line">SEE <span>•</span> HEAR <span>•</span> UNDERSTAND <span>•</span> BUILD</p>
             {notice && <p className="hero-notice" role="status"><Check size={14} /> {notice}</p>}
             {error && !authOpen && <p className="hero-error" role="alert">{error}</p>}
@@ -885,144 +949,172 @@ function App() {
         </div>
       </section>
 
-      {forecast && (
-        <ForecastPanel
-          forecast={forecast}
-          calibration={calibration}
-          resolving={resolvingForecast}
-          attachingMarket={attachingMarket}
-          runningIntelligence={runningIntelligence}
-          marketNote={marketNote}
-          intelligenceNote={intelligenceNote}
-          onResolve={handleResolveForecast}
-          onAttachMarket={handleAttachMarket}
-          onRunIntelligence={handleRunIntelligence}
-        />
-      )}
-
       {world && (
-        <section className="world-section" id="project-world">
-          <div className="world-heading">
-            <div>
-              <p className="section-kicker">PROJECT WORLD</p>
-              <h1>{world.project.name || 'Your idea is in motion.'}</h1>
-              <p>{world.project.current_reality || 'Perception has established the first durable project state.'}</p>
-            </div>
-            <div className="world-heading-actions">
-              <div className="world-status"><strong>{completedStages.size}/7</strong><span>verified stages</span></div>
-              {!forecast && world.objectives.at(-1) && !['realized', 'superseded'].includes(world.objectives.at(-1)?.status || '') && (
-                <button className="continue-route" type="button" onClick={handleContinueRoute} disabled={busy || continuingRoute}>
-                  {continuingRoute ? 'CONTINUING…' : 'CONTINUE ROUTE'}
+        <section className="world-section result-section" id="project-world">
+          <div className="result-intro">
+            <p className="section-kicker">{forecast ? 'PERCEPTION FORECAST' : 'PERCEPTION RESULT'}</p>
+            <h1>
+              {forecast
+                ? `${Math.round(forecast.current_probability * 100)}% — ${forecast.question}`
+                : world.project.current_reality || world.project.name || 'Perception has a working view.'}
+            </h1>
+            <p className="result-summary">
+              {forecast
+                ? `This is the current calibrated estimate, not a guarantee. Perception will only move it when new evidence justifies a revision.`
+                : latestObjective
+                  ? `Perception understands the goal: ${latestObjective.statement}. ${world.project.current_reality || 'The route is active and will advance only when effects are verified.'}`
+                  : 'Perception has restored your durable Project World.'}
+            </p>
+            <div className="result-actions">
+              <button type="button" onClick={() => setResultDepth('depth')}>GO DEEPER</button>
+              {(forecast || canContinueObjective) && (
+                <button
+                  type="button"
+                  className="result-action-primary"
+                  onClick={forecast ? handleRunIntelligence : handleContinueRoute}
+                  disabled={busy || continuingRoute || runningIntelligence}
+                >
+                  {busy || continuingRoute || runningIntelligence ? 'WORKING…' : 'TAKE THE NEXT STEP'}
                 </button>
               )}
+              <button type="button" onClick={() => { setResultDepth('depth'); setShowEvidence(true) }}>SHOW ME THE EVIDENCE</button>
             </div>
           </div>
 
-          <div className="stage-strip" aria-label="Perception verified runtime">
-            {targetStages.map((stage, index) => (
-              <div className={completedStages.has(stage) ? 'stage-chip stage-chip--done' : 'stage-chip'} key={stage}>
-                <span>{completedStages.has(stage) ? '✓' : index + 1}</span>
-                <small>{stage}</small>
+          {resultDepth === 'depth' && (
+            <div className="result-depth">
+              <div className="result-depth-grid">
+                <article>
+                  <p className="card-label">What Perception found</p>
+                  <h2>{forecast ? `${Math.round(forecast.current_probability * 100)}% current probability` : world.project.current_reality || 'A durable route is active.'}</h2>
+                  <p>{forecast ? `${verifiedEvidenceCount} verification evidence item${verifiedEvidenceCount === 1 ? '' : 's'} are currently recorded.` : `${verifiedEvidenceCount} verification evidence item${verifiedEvidenceCount === 1 ? '' : 's'} are attached to this Project World.`}</p>
+                </article>
+                <article>
+                  <p className="card-label">What it means</p>
+                  <h2>{world.verifications.at(-1)?.passed ? 'The latest bounded effect is verified.' : forecast ? 'Confidence should stay provisional.' : 'The objective is still in progress.'}</h2>
+                  <p>{forecast ? 'Probability can change as independent evidence, base rates, and resolved outcomes arrive.' : 'Perception separates what is known, inferred, attempted, and verified before it changes current reality.'}</p>
+                </article>
+                <article>
+                  <p className="card-label">What should happen next</p>
+                  <h2>{forecast ? 'Run fresh intelligence when the evidence changes.' : canContinueObjective ? 'Continue the same route.' : 'Review the evidence and decide what to pursue next.'}</h2>
+                  <p>{forecast ? 'Perception can scan for new signals without rewriting earlier probability versions.' : 'The next action stays inside this Project World so history, permissions, and verification remain intact.'}</p>
+                </article>
               </div>
-            ))}
-          </div>
 
-          {ledgers && (
-            <div className="trust-summary" aria-label="Perception trust state">
-              <div>
-                <span>KNOWN</span>
-                <strong>{ledgers.epistemic.filter((entry) => entry.state === 'observed' || entry.state === 'confirmed').length}</strong>
-                <small>trusted claims</small>
-              </div>
-              <div>
-                <span>INFERRED</span>
-                <strong>{ledgers.epistemic.filter((entry) => entry.state === 'inferred').length}</strong>
-                <small>revisable claims</small>
-              </div>
-              <div>
-                <span>ATTEMPTED</span>
-                <strong>{ledgers.execution.filter((entry) => entry.phase === 'attempted').length}</strong>
-                <small>execution attempts</small>
-              </div>
-              <div>
-                <span>VERIFIED</span>
-                <strong>{ledgers.execution.filter((entry) => entry.phase === 'verified').length}</strong>
-                <small>verified effects</small>
-              </div>
-            </div>
-          )}
+              <div className="result-inspectors">
+                <details>
+                  <summary>Details</summary>
+                  {forecast ? (
+                    <ForecastPanel
+                      forecast={forecast}
+                      calibration={calibration}
+                      resolving={resolvingForecast}
+                      attachingMarket={attachingMarket}
+                      runningIntelligence={runningIntelligence}
+                      marketNote={marketNote}
+                      intelligenceNote={intelligenceNote}
+                      onResolve={handleResolveForecast}
+                      onAttachMarket={handleAttachMarket}
+                      onRunIntelligence={handleRunIntelligence}
+                    />
+                  ) : (
+                    <div className="world-grid">
+                      <article className="world-card world-card--wide">
+                        <p className="card-label">CURRENT REALITY</p>
+                        <h2>{world.project.current_reality}</h2>
+                        <p>Only verified effects can advance this state.</p>
+                      </article>
+                      <article className="world-card">
+                        <p className="card-label">OBJECTIVE</p>
+                        <h3>{latestObjective?.statement || '—'}</h3>
+                        <span>{latestObjective?.status || 'active'}</span>
+                      </article>
+                      <article className="world-card">
+                        <p className="card-label">VERIFICATION</p>
+                        <h3>{world.verifications.at(-1)?.passed ? 'VERIFIED' : 'PENDING'}</h3>
+                        <span>{world.verifications.at(-1)?.evidence.length ?? 0} evidence checks</span>
+                      </article>
+                    </div>
+                  )}
+                </details>
 
-<GrowthOperatorPanel projectId={world.project.id} />
-
-          <div className="world-grid">
-            <article className="world-card world-card--wide">
-              <p className="card-label">CURRENT REALITY</p>
-              <h2>{world.project.current_reality}</h2>
-              <p>Only verified effects can advance this state.</p>
-            </article>
-            <article className="world-card">
-              <p className="card-label">OBJECTIVE</p>
-              <h3>{world.objectives.at(-1)?.statement || forecast?.question || '—'}</h3>
-              <span>
-                {world.objectives.at(-1)?.meaning_source
-                  ? `${world.objectives.at(-1)?.status || 'active'} · meaning ${world.objectives.at(-1)?.meaning_source} ${Math.round((world.objectives.at(-1)?.meaning_confidence ?? 0) * 100)}%`
-                  : world.objectives.at(-1)?.status || forecast?.status || 'active'}
-              </span>
-            </article>
-            <article className="world-card">
-              <p className="card-label">PORTABLE WORKER</p>
-              <h3>{world.worker_runs.at(-1)?.worker_key || (forecast ? 'forecast_runtime' : 'Waiting')}</h3>
-              <span>{world.worker_runs.at(-1)?.status || (forecast ? 'tracking' : 'not started')}</span>
-            </article>
-            <article className="world-card">
-              <p className="card-label">VERIFICATION</p>
-              <h3>{world.verifications.at(-1)?.passed ? 'PASS' : forecast?.status === 'resolved' ? 'RESOLVED' : 'PENDING'}</h3>
-              <span>{world.verifications.at(-1)?.evidence.length ?? 0} evidence checks</span>
-            </article>
-            <article className="world-card">
-              <p className="card-label">AUDIT TRAIL</p>
-              <h3>{world.events.length} events</h3>
-              <span>append-oriented Project World history</span>
-            </article>
-          </div>
-
-          {ledgers && (ledgers.epistemic.length > 0 || ledgers.execution.length > 0) && (
-            <div className="ledger-panel">
-              <article>
-                <div className="ledger-heading">
-                  <p className="card-label">EPISTEMIC LEDGER</p>
-                  <span>{ledgers.epistemic.length} claims</span>
-                </div>
-                <div className="ledger-list">
-                  {ledgers.epistemic.slice(-5).reverse().map((entry) => (
-                    <div className="ledger-row" key={entry.id}>
-                      <span className={`ledger-state ledger-state--${entry.state}`}>{entry.state}</span>
-                      <div>
+                <details open={showEvidence} onToggle={(event) => setShowEvidence(event.currentTarget.open)}>
+                  <summary>Evidence</summary>
+                  <div className="evidence-consumer-list">
+                    {ledgers?.epistemic.length ? ledgers.epistemic.slice(-6).reverse().map((entry) => (
+                      <article key={entry.id}>
+                        <span>{entry.state === 'observed' || entry.state === 'confirmed' ? 'Verified / observed' : 'Working inference'}</span>
                         <strong>{entry.statement}</strong>
-                        <small>{Math.round(entry.confidence * 100)}% confidence · {entry.claim_key}</small>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </article>
+                      </article>
+                    )) : <p>No evidence has been recorded yet.</p>}
+                  </div>
+                </details>
 
-              <article>
-                <div className="ledger-heading">
-                  <p className="card-label">EXECUTION LEDGER</p>
-                  <span>{ledgers.execution.length} effects</span>
-                </div>
-                <div className="ledger-list">
-                  {ledgers.execution.slice(-7).reverse().map((entry) => (
-                    <div className="ledger-row" key={entry.id}>
-                      <span className={`ledger-state ledger-state--${entry.phase}`}>{entry.phase}</span>
-                      <div>
-                        <strong>{entry.capability || 'runtime'} · {entry.permission_level}</strong>
-                        <small>{entry.action_key}</small>
+                <details>
+                  <summary>Activity</summary>
+                  <div className="stage-strip" aria-label="Perception verified runtime">
+                    {targetStages.map((stage, index) => (
+                      <div className={completedStages.has(stage) ? 'stage-chip stage-chip--done' : 'stage-chip'} key={stage}>
+                        <span>{completedStages.has(stage) ? '✓' : index + 1}</span>
+                        <small>{stage}</small>
                       </div>
+                    ))}
+                  </div>
+                  <p className="activity-summary">{world.events.length} durable events are preserved in this Project World.</p>
+                </details>
+
+                <details open={showSystem} onToggle={(event) => setShowSystem(event.currentTarget.open)}>
+                  <summary>System</summary>
+                  {showSystem && (
+                    <div className="system-surface" id="system-surface">
+                      <div className="system-actions">
+                        <button className="quiet-action" type="button" onClick={handlePrepareOperatorProof} disabled={runningOperatorTest || busy}>
+                          {runningOperatorTest ? 'PREPARING…' : 'PREPARE OPERATOR PROOF'}
+                        </button>
+                        <button className="quiet-action" type="button" onClick={handleRegisterPasskey} disabled={registeringPasskey}>
+                          {registeringPasskey ? 'ADDING PASSKEY…' : 'ENABLE PASSKEY'}
+                        </button>
+                      </div>
+                      <TokenEfficiencyPanel />
+                      <GrowthOperatorPanel projectId={world.project.id} />
+                      {ledgers && (
+                        <>
+                          <div className="trust-summary" aria-label="Perception trust state">
+                            <div><span>KNOWN</span><strong>{ledgers.epistemic.filter((entry) => entry.state === 'observed' || entry.state === 'confirmed').length}</strong><small>trusted claims</small></div>
+                            <div><span>INFERRED</span><strong>{ledgers.epistemic.filter((entry) => entry.state === 'inferred').length}</strong><small>revisable claims</small></div>
+                            <div><span>ATTEMPTED</span><strong>{ledgers.execution.filter((entry) => entry.phase === 'attempted').length}</strong><small>execution attempts</small></div>
+                            <div><span>VERIFIED</span><strong>{ledgers.execution.filter((entry) => entry.phase === 'verified').length}</strong><small>verified effects</small></div>
+                          </div>
+                          <div className="ledger-panel">
+                            <article>
+                              <div className="ledger-heading"><p className="card-label">EPISTEMIC LEDGER</p><span>{ledgers.epistemic.length} claims</span></div>
+                              <div className="ledger-list">
+                                {ledgers.epistemic.slice(-5).reverse().map((entry) => (
+                                  <div className="ledger-row" key={entry.id}>
+                                    <span className={`ledger-state ledger-state--${entry.state}`}>{entry.state}</span>
+                                    <div><strong>{entry.statement}</strong><small>{Math.round(entry.confidence * 100)}% confidence · {entry.claim_key}</small></div>
+                                  </div>
+                                ))}
+                              </div>
+                            </article>
+                            <article>
+                              <div className="ledger-heading"><p className="card-label">EXECUTION LEDGER</p><span>{ledgers.execution.length} effects</span></div>
+                              <div className="ledger-list">
+                                {ledgers.execution.slice(-7).reverse().map((entry) => (
+                                  <div className="ledger-row" key={entry.id}>
+                                    <span className={`ledger-state ledger-state--${entry.phase}`}>{entry.phase}</span>
+                                    <div><strong>{entry.capability || 'runtime'} · {entry.permission_level}</strong><small>{entry.action_key}</small></div>
+                                  </div>
+                                ))}
+                              </div>
+                            </article>
+                          </div>
+                        </>
+                      )}
                     </div>
-                  ))}
-                </div>
-              </article>
+                  )}
+                </details>
+              </div>
             </div>
           )}
         </section>
@@ -1030,7 +1122,7 @@ function App() {
 
       {!world && session && !loading && (
         <section className="empty-world">
-          <p>Signed in. Your first idea will create a durable Project World.</p>
+          <p>Signed in. Start with a question or goal; Perception will create a Project World only when the work warrants one.</p>
         </section>
       )}
 
