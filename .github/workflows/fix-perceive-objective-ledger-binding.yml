@@ -27,45 +27,29 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-
           path = Path('supabase/functions/perceive-objective/index.ts')
-          text = path.read_text()
-
-          route_anchor = """      for (const decision of capabilityRouting.filter((candidate) => candidate.executionMode === 'external')) {
-        const routeNode = routePlan.nodes.find((node) => node.key === decision.nodeKey)
-        let actionContract: ReturnType<typeof buildGitHubActionContract> | null = null
-"""
-          route_replacement = """      for (const decision of capabilityRouting.filter((candidate) => candidate.executionMode === 'external')) {
-        const routeNode = routePlan.nodes.find((node) => node.key === decision.nodeKey)
-        const continuationIndex = continuationPlanNodes.findIndex((candidate) => candidate.key === decision.nodeKey)
-        const expectedSortOrder = continuationIndex >= 0 ? continuationIndex + 1 : null
-        const routeNodeId = expectedSortOrder === null
-          ? null
-          : (persistedRouteNodes.data ?? []).find((candidate) => candidate.sort_order === expectedSortOrder)?.id ?? null
-        let actionContract: ReturnType<typeof buildGitHubActionContract> | null = null
-"""
-
-          status_anchor = """          actionContracts.push(actionContract)
-        }
-
-        const { error: intentError } = await admin.from('perception_execution_ledger').insert({
-"""
-          status_replacement = """          actionContracts.push(actionContract)
-        }
-
-        const routingStatus = actionContract?.status ?? decision.status
-
-        const { error: intentError } = await admin.from('perception_execution_ledger').insert({
-"""
-
-          if text.count(route_anchor) != 1:
-              raise SystemExit(f'route anchor count was {text.count(route_anchor)}, expected 1')
-          if text.count(status_anchor) != 1:
-              raise SystemExit(f'status anchor count was {text.count(status_anchor)}, expected 1')
-
-          text = text.replace(route_anchor, route_replacement, 1)
-          text = text.replace(status_anchor, status_replacement, 1)
-          path.write_text(text)
+          lines = path.read_text().splitlines()
+          route_anchor = "        const routeNode = routePlan.nodes.find((node) => node.key === decision.nodeKey)"
+          ledger_anchor = "        const { error: intentError } = await admin.from('perception_execution_ledger').insert({"
+          if lines.count(route_anchor) != 1:
+              raise SystemExit(f'route anchor count was {lines.count(route_anchor)}, expected 1')
+          if lines.count(ledger_anchor) != 1:
+              raise SystemExit(f'ledger anchor count was {lines.count(ledger_anchor)}, expected 1')
+          route_index = lines.index(route_anchor)
+          route_bindings = [
+              "        const continuationIndex = continuationPlanNodes.findIndex((candidate) => candidate.key === decision.nodeKey)",
+              "        const expectedSortOrder = continuationIndex >= 0 ? continuationIndex + 1 : null",
+              "        const routeNodeId = expectedSortOrder === null",
+              "          ? null",
+              "          : (persistedRouteNodes.data ?? []).find((candidate) => candidate.sort_order === expectedSortOrder)?.id ?? null",
+          ]
+          lines[route_index + 1:route_index + 1] = route_bindings
+          ledger_index = lines.index(ledger_anchor)
+          lines[ledger_index:ledger_index] = [
+              "        const routingStatus = actionContract?.status ?? decision.status",
+              "",
+          ]
+          path.write_text('\n'.join(lines) + '\n')
           PY
 
       - name: Verify regression and full test suite
