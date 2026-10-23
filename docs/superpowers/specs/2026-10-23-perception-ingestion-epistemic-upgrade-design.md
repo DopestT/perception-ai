@@ -30,14 +30,14 @@ Existing components retained:
 - `perception_learning_candidates` — item-level findings worth evaluating or learning from.
 - `perception_learning_ledger` — durable accepted learning history.
 - `perception_beliefs` — Project World beliefs with state, evidence, contradictions, and confidence.
-- `perception_world_signals` — material verified or otherwise accepted world changes that may affect routing.
+- `perception_world_signals` — material world changes that may affect routing.
 - `perception_verification_runs` — existing route/execution verification records.
 - `perception_model_events` — append-oriented audit events.
 - Continuous Mind source claiming, fetch protections, ETag/Last-Modified support, retry/backoff, and Scenario Forge refresh.
 - Perception Sovereign Storage Rule — canonical state remains on LWV-controlled infrastructure.
 - Route-to-Reality permission and verification boundaries.
 
-The upgrade may tighten the semantics of existing flows, but it must not silently redefine historical records or erase prior learning history.
+The upgrade may tighten the semantics of future flows, but it must not silently redefine historical records or erase prior learning history.
 
 ## Success criteria
 
@@ -45,7 +45,7 @@ The design is successful when the implementation can prove all of the following:
 
 1. Any supported connector can submit information through one provider-independent intake contract.
 2. Raw source observations remain immutable evidence and never become canonical truth merely because they were ingested.
-3. One observation may yield zero, one, or many atomic claims without losing the exact provenance back to the observation.
+3. One observation may yield zero, one, or many atomic claims without losing exact provenance back to the observation.
 4. Repeated ingestion of the same source event is idempotent.
 5. Multiple URLs derived from one original source lineage do not count as independent corroboration.
 6. Independent corroborating evidence increases support for a claim.
@@ -68,6 +68,7 @@ This design does not:
 - replace `perception_learning_candidates` with claims;
 - replace `perception_learning_ledger` with a new ledger;
 - replace `perception_beliefs` or `perception_world_signals`;
+- replace route/execution verification with epistemic verification;
 - grant execution permission through ingestion or learning;
 - allow model consensus to count as independent evidence;
 - make vector search, provider memory, hosted threads, or provider-side storage authoritative;
@@ -141,25 +142,81 @@ Vector search may accelerate retrieval, clustering, and candidate matching, but 
 
 ## Core truth boundary
 
-The following states are intentionally different:
+The observation layer and claim layer are distinct.
 
-- **observed** — raw evidence exists;
-- **extracted** — a candidate assertion has been parsed from evidence;
-- **supported** — one or more pieces of evidence support the assertion;
-- **conflicted** — credible evidence materially disagrees;
-- **verification_pending** — the assertion matters enough to verify;
-- **verified** — an accepted verification strategy passed;
-- **rejected** — verification failed or authoritative evidence disproved the assertion;
-- **stale** — prior verification is older than the claim's freshness policy allows;
+- **observed** describes the existence of raw evidence in `perception_source_observations`.
+- A claim begins at **extracted** after Perception has parsed an atomic assertion from one or more observations or from an already-verified internal event.
+
+Claim states:
+
+- **extracted** — candidate assertion exists but support has not been reconciled.
+- **supported** — evidence supports the assertion but no qualifying verification has passed.
+- **conflicted** — credible evidence materially disagrees.
+- **verification_pending** — a durable verification task is open.
+- **verified** — an accepted verification strategy passed.
+- **rejected** — verification failed or authoritative evidence disproved the assertion.
+- **stale** — prior verification is older than the claim's freshness policy allows.
 - **superseded** — a later claim validly replaces the earlier one while preserving historical correctness.
 
 Only `verified` claims may automatically advance canonical Project World truth.
 
-A `supported` or high-confidence claim may inform research, hypotheses, candidate routes, and verification prioritization, but it must remain explicitly non-authoritative.
+A `supported`, `conflicted`, or high-confidence claim may inform research, hypotheses, candidate routes, and verification prioritization, but it remains explicitly non-authoritative.
+
+### Allowed state transitions
+
+The claim state machine is deterministic:
+
+```text
+extracted
+  -> supported
+  -> conflicted
+  -> verification_pending
+  -> rejected
+  -> superseded
+
+supported
+  -> verification_pending
+  -> conflicted
+  -> rejected
+  -> superseded
+
+verification_pending
+  -> verified
+  -> conflicted
+  -> rejected
+  -> superseded
+
+verified
+  -> stale
+  -> conflicted
+  -> superseded
+
+stale
+  -> verification_pending
+  -> verified
+  -> conflicted
+  -> rejected
+  -> superseded
+
+conflicted
+  -> verification_pending
+  -> verified
+  -> rejected
+  -> superseded
+
+rejected
+  -> verification_pending   # only when materially new independent evidence arrives
+  -> superseded
+
+superseded
+  -> terminal for truth state; audit metadata may still be appended
+```
+
+No direct transition from `extracted`, `supported`, or `conflicted` to `verified` is allowed without a successful verification run.
 
 ## Additive data model
 
-The implementation should add an epistemic layer around the existing tables.
+The implementation adds an epistemic layer around the existing tables.
 
 ### `perception_ingestion_runs`
 
@@ -244,6 +301,7 @@ Minimum fields:
 - `claim_fingerprint`
 - `state`
 - `effective_confidence`
+- `confidence_version`
 - `confidence_components`
 - `extraction_method`
 - `extractor_version`
@@ -310,7 +368,7 @@ Independent corroboration is calculated from provenance roots, not URL count.
 
 ### `perception_verification_tasks`
 
-Purpose: durable queue and receipt for claim verification.
+Purpose: durable scheduling record for claim verification.
 
 Minimum fields:
 
@@ -327,15 +385,37 @@ Minimum fields:
 - `estimated_cost`
 - `strategy`
 - `requirements`
-- `status`
+- `status` (`queued`, `running`, `passed`, `failed`, `cancelled`, `superseded`)
 - `attempts`
-- `result`
-- `evidence`
 - `requested_at`
 - `started_at`
 - `finished_at`
 
-The task may reference an existing `perception_verification_runs` record where route/execution verification is the appropriate proof mechanism. The new table is not a replacement for route-node verification; it covers epistemic claim verification that may occur outside a route node.
+Tasks are mutable queue state. They do not serve as immutable proof receipts.
+
+### `perception_claim_verification_runs`
+
+Purpose: append-oriented verification attempt and receipt history for epistemic claims.
+
+Minimum fields:
+
+- `id`
+- `user_id`
+- `project_id`
+- `task_id`
+- `claim_id`
+- `strategy`
+- `requirements_snapshot`
+- `passed`
+- `evidence`
+- `details`
+- `verification_strength`
+- `started_at`
+- `checked_at`
+- `runtime_version`
+- `related_route_verification_run_id`
+
+A claim-verification run may reference an existing `perception_verification_runs` record where route/execution verification is the appropriate proof mechanism. The new table does not replace route-node verification; it covers epistemic verification that may occur outside a route node and preserves immutable attempts independently from queue state.
 
 ### `perception_source_domain_stats`
 
@@ -373,11 +453,14 @@ source observation
                |
                +--> evidence graph
                +--> conflicts
-               +--> verification tasks
-               +--> verified claim
+               +--> verification task
                         |
-                        +--> world signal / belief update candidate
-                        +--> learning ledger
+                        +--> verification run(s)
+                                 |
+                                 +--> verified claim
+                                          |
+                                          +--> world signal / belief update candidate
+                                          +--> learning ledger
 ```
 
 `perception_learning_candidates.status = accepted` continues to mean "accepted as useful learning." It must no longer imply "verified as external truth."
@@ -436,7 +519,7 @@ The default path performs cheap, deterministic work before invoking a model:
 - deterministic freshness calculations;
 - known claim fingerprint matching;
 - exact contradiction checks;
-- previously learned provenance lineage matches;
+- previously learned provenance-lineage matches;
 - policy and permission checks.
 
 If the observation can be fully reconciled deterministically, no model call is required.
@@ -486,7 +569,7 @@ Decision Fabric, where used, follows the same rule. Its classifications are mach
 
 Perception stores confidence as an explainable decomposition rather than one opaque model-provided scalar.
 
-Required components:
+Required components, each normalized into `[0,1]`:
 
 - `source_trust`
 - `extraction_certainty`
@@ -496,11 +579,39 @@ Required components:
 - `verification_strength`
 - `specificity`
 
-Initial effective confidence should use a versioned deterministic function. The first implementation may use a weighted geometric or weighted arithmetic composition, but the exact function must be versioned and stored with the claim so scores remain reproducible.
+### Confidence v1
+
+The initial deterministic score is:
+
+```text
+effective_confidence_v1 = clamp(
+    0.20 * source_trust
+  + 0.20 * extraction_certainty
+  + 0.15 * freshness
+  + 0.15 * independent_corroboration
+  + 0.20 * verification_strength
+  + 0.10 * specificity
+  - 0.25 * contradiction_pressure,
+  0,
+  1
+)
+```
+
+`confidence_version = 1` is stored with the components so historical scores remain reproducible if later formulas change.
+
+Initial component rules:
+
+- `source_trust` uses domain-calibrated trust when sample size is sufficient; otherwise configured trust is the prior.
+- `extraction_certainty` is deterministic for typed/direct fields and may use bounded model extraction certainty for semantic claims.
+- `freshness` is `1` when newly observed and declines according to the claim's domain freshness policy; it never changes the historical evidence timestamp.
+- `independent_corroboration = 1 - exp(-0.7 * max(0, independent_root_count - 1))`; the first provenance root establishes support but not corroboration.
+- `contradiction_pressure` is the maximum unresolved material contradiction strength after provenance weighting.
+- `verification_strength = 0` before any accepted verification; successful verification strategies assign a strategy-specific strength in `[0,1]` but state promotion is still governed separately.
+- `specificity` measures how directly the evidence proves the exact normalized claim rather than a nearby/general assertion.
 
 Hard rule: no confidence score, including `1.0`, bypasses verification when the claim would advance external Project World truth.
 
-Confidence therefore answers "how strongly should Perception treat this as supported and how urgently should it verify it?" rather than "is this automatically true?"
+Confidence answers "how strongly should Perception treat this as supported and how urgently should it verify it?" rather than "is this automatically true?"
 
 ## Provenance lineage and independence
 
@@ -518,7 +629,7 @@ Reuters original
 
 This is one independent root unless another source independently observed or established the fact.
 
-Lineage detection may use deterministic metadata first and model-assisted similarity second. Uncertain lineage is conservative: it does not increase independent corroboration until independence is established.
+Lineage detection uses deterministic metadata first and model-assisted similarity second. Uncertain lineage is conservative: it does not increase independent corroboration until independence is established.
 
 ## Contradiction engine
 
@@ -575,15 +686,16 @@ Stale claims retain their historical verification evidence and enter the verific
 Verification work is prioritized by a deterministic policy based on:
 
 ```text
-materiality
-x uncertainty
-x route impact
-x freshness urgency
-x contradiction severity
-/ estimated verification cost
+priority =
+  materiality
+  * uncertainty
+  * route_impact
+  * freshness_urgency
+  * contradiction_severity
+  / max(estimated_verification_cost, minimum_cost_floor)
 ```
 
-The implementation may normalize each factor into `[0,1]`; zero cost is forbidden and a minimum denominator prevents runaway priority.
+Each numerator factor is normalized into `[0,1]`. `minimum_cost_floor` is a positive policy value so zero/near-zero estimated cost cannot create infinite priority.
 
 Priority is a queueing mechanism only. It does not weaken verification requirements.
 
@@ -609,7 +721,7 @@ Recheck after an expected state transition or after the freshness window expires
 
 ### User-authoritative declaration
 
-For facts where the user is legitimately the authority, explicit user input may verify the claim. The receipt must record that authority type rather than pretending it was independently observed.
+For facts where the user is legitimately the authority, explicit user input may verify the claim. The receipt records that authority type rather than pretending it was independently observed.
 
 ### Execution verification
 
@@ -619,7 +731,7 @@ For action outcomes, use the existing intended -> authorized -> attempted -> obs
 
 Compare two authoritative systems when consistency itself is the claim, for example repository commit versus production deployment commit.
 
-Every verification receipt records the strategy, requirements, evidence, result, and timestamps.
+Every claim-verification run records the strategy, requirements snapshot, evidence, result, strength, runtime version, and timestamps.
 
 ## Promotion gate
 
@@ -632,7 +744,7 @@ observation
  -> claim
  -> support/conflict analysis
  -> verification task
- -> verification passed
+ -> verification run passed
  -> claim state = verified
  -> promotion event
  -> world signal / belief update candidate
@@ -642,7 +754,7 @@ observation
 The promotion function/RPC must:
 
 - require the claim to be in a promotable state;
-- require an eligible successful verification receipt;
+- require an eligible successful `perception_claim_verification_runs` receipt or an explicitly linked already-verified internal Perception event;
 - preserve all evidence references;
 - emit an append-only model event;
 - be idempotent;
@@ -694,7 +806,7 @@ Per source/domain, Perception tracks:
 
 Configured trust weights remain priors. Learned reputation adjusts prioritization and confidence components, but does not independently cross the truth boundary.
 
-Sparse-data domains must remain conservative. A source with one success does not become globally trusted.
+Sparse-data domains remain conservative. A source with one success does not become globally trusted.
 
 ## Dormant-time Continuous Mind MAX
 
@@ -711,7 +823,7 @@ A scheduled cycle may perform, within policy and budget:
 7. recalculate freshness for material claims;
 8. queue verification work;
 9. execute eligible P0 verification actions;
-10. update claim states from verified results;
+10. update claim states from verification results;
 11. update source-domain calibration;
 12. score previous forecasts against observed outcomes where applicable;
 13. refresh Scenario Forge;
@@ -747,7 +859,8 @@ Stable identities are required for:
 - claims;
 - claim/evidence relations;
 - provenance roots;
-- verification requests;
+- verification tasks;
+- verification runs;
 - promotion events.
 
 Retrying the same source event many times must not create duplicate knowledge.
@@ -758,7 +871,7 @@ Raw observations remain replayable. A newer extractor version may derive improve
 
 The entire pipeline fails closed and degrades gracefully.
 
-- Invalid payload -> reject before storage except for a bounded audit failure record where appropriate.
+- Invalid payload -> reject before evidence storage except for a bounded audit failure record where appropriate.
 - Missing/invalid authoritative observation timestamp -> reject; do not substitute server time.
 - Duplicate event -> return idempotent success with existing identities.
 - Extraction failure -> keep the raw observation and mark the ingestion run partial/failed at extraction.
@@ -775,13 +888,13 @@ The entire pipeline fails closed and degrades gracefully.
 
 ### Storage
 
-Canonical observations, claims, entities, lineage, verification tasks, evidence, and promotion receipts live on LWV-controlled Perception infrastructure.
+Canonical observations, claims, entities, lineage, verification tasks/runs, evidence, and promotion receipts live on LWV-controlled Perception infrastructure.
 
 Provider calls receive bounded copies only. Provider memory, hosted vector stores, conversations, threads, prior-response chains, or proprietary memory cannot become the system of record.
 
 ### RLS and privileged functions
 
-Any new exposed table must use RLS. User-visible reads must remain owner/project scoped. Internal cross-table mutation or promotion functions must use the narrowest privileges possible, explicitly revoke `PUBLIC`/`anon`/`authenticated` execution where not required, and remain callable only through the intended trusted runtime boundary.
+Any new exposed table must use RLS. User-visible reads remain owner/project scoped. Internal cross-table mutation or promotion functions use the narrowest privileges possible, explicitly revoke `PUBLIC`/`anon`/`authenticated` execution where not required, and remain callable only through the intended trusted runtime boundary.
 
 ### Permission separation
 
@@ -830,7 +943,7 @@ Perception must be able to answer, for any material claim:
 - What Project World state depends on it?
 - What changed when it was promoted, rejected, made stale, or superseded?
 
-Operational metrics should include:
+Operational metrics include:
 
 - observations ingested;
 - dedupe rate;
@@ -850,9 +963,9 @@ Operational metrics should include:
 
 The design is intentionally additive.
 
-No existing table is removed. Existing public/runtime contracts should continue working while the epistemic layer is introduced behind feature flags or shadow mode where needed.
+No existing table is removed. Existing public/runtime contracts continue working while the epistemic layer is introduced behind feature flags or shadow mode where needed.
 
-Recommended rollout semantics:
+Architectural rollout boundaries:
 
 1. Persist new ingestion/claim/evidence structures in shadow mode.
 2. Compare claim extraction/reconciliation with current learning behavior.
@@ -860,7 +973,7 @@ Recommended rollout semantics:
 4. Enable verified-claim promotion into existing world-signal/belief machinery.
 5. Expand dormant-time verification and source calibration only after the core truth gate is proven.
 
-These are architectural rollout boundaries, not the implementation task plan. The implementation plan is written only after this design is reviewed and approved.
+These are design boundaries, not the implementation task plan. The implementation plan is written only after this design is reviewed and approved.
 
 ## Production gate and issue #80
 
@@ -902,6 +1015,8 @@ The implementation is not complete until the following scenarios pass with durab
 18. Query a verified claim -> Perception can explain why it believes it, with source/evidence/verification references.
 19. Query a rejected/conflicted claim -> Perception can explain why it did not accept it as truth.
 20. Reconstruct one Project World from LWV-controlled state -> all promoted claim provenance remains reachable.
+21. Create a verification task with multiple failed attempts -> every attempt remains preserved in `perception_claim_verification_runs` while the task reflects current queue state.
+22. Present a model assessment with confidence 1.0 and no qualifying verification -> claim remains non-verified.
 
 ## Design invariants
 
@@ -922,6 +1037,7 @@ These are hard requirements, not tuning preferences:
 13. Knowledge confidence cannot raise execution permissions.
 14. Dormant learning cannot silently perform consequential external actions.
 15. Failed or unavailable verification leaves truth unchanged.
+16. Verification queue state and verification proof receipts are separate records.
 
 ## Final designed state
 
