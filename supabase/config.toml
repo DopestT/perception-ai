@@ -8,3 +8,8 @@ verify_jwt = false
 # The function never accepts a broad bearer credential or exposes service-role access.
 [functions.microsite-provider-response]
 verify_jwt = false
+
+# Stripe cannot send a Supabase JWT. This endpoint accepts only POST requests and
+# verifies Stripe's signed raw request body before any privileged database write.
+[functions.lmtyai-stripe-webhook]
+verify_jwt = false

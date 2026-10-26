@@ -34,6 +34,15 @@ jobs:
           grep -q "MICROSITE_OFFER_TOKEN_SECRET" supabase/functions/microsite-provider-response/index.ts
           grep -q "perception_accept_microsite_offer" supabase/functions/microsite-provider-response/index.ts
           ! grep -E 'console\.(log|error|warn)\([^)]*(token|MICROSITE_OFFER_TOKEN_SECRET)' supabase/functions/microsite-provider-response/index.ts
+      - name: LMTYAI Max C Stripe webhook gate
+        run: |
+          grep -q '^\[functions.lmtyai-stripe-webhook\]$' supabase/config.toml
+          grep -A 1 '^\[functions.lmtyai-stripe-webhook\]$' supabase/config.toml | grep -q '^verify_jwt = false$'
+          grep -q 'stripe-signature' supabase/functions/lmtyai-stripe-webhook/index.ts
+          grep -q 'constructEventAsync' supabase/functions/lmtyai-stripe-webhook/index.ts
+          grep -q 'createSubtleCryptoProvider' supabase/functions/lmtyai-stripe-webhook/index.ts
+          grep -q 'lmtyai_get_stripe_webhook_secret' supabase/functions/lmtyai-stripe-webhook/index.ts
+          ! grep -E 'console\.(log|error|warn)\([^)]*(webhookSecret|stripe-signature)' supabase/functions/lmtyai-stripe-webhook/index.ts
       - run: bash -n scripts/perception-sovereign-backup.sh scripts/perception-sovereign-restore-check.sh
       - run: npm run build
       - run: npm --prefix microsites/hagerstown test
