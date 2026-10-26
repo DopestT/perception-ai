@@ -23,6 +23,9 @@ const supportedEvents = new Set([
   'invoice.payment_failed',
 ])
 
+const stripe = new Stripe('sk_webhook_verification_only')
+const cryptoProvider = Stripe.createSubtleCryptoProvider()
+
 function serviceKey() {
   const named = JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS') ?? '{}') as Record<string, string>
   return named.default || Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SUPABASE_SECRET_KEY') || ''
@@ -47,11 +50,15 @@ Deno.serve(async (req: Request) => {
   }
 
   const rawBody = await req.text()
-  const stripe = new Stripe('sk_placeholder', { apiVersion: '2025-08-27.basil' })
-
   let event: Stripe.Event
   try {
-    event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret)
+    event = await stripe.webhooks.constructEventAsync(
+      rawBody,
+      signature,
+      webhookSecret,
+      undefined,
+      cryptoProvider,
+    )
   } catch {
     return json({ ok: false, error: 'invalid_signature' }, 400)
   }
