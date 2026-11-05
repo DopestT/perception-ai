@@ -141,8 +141,8 @@ export function validateWorkforceTaskContract(
   }
 
   if (!futureTimestamp(task.deadlineAt, now)) errors.push('deadline_not_future')
-  if (!Number.isInteger(task.maxAttempts)
-    || typeof task.maxAttempts !== 'number'
+  if (typeof task.maxAttempts !== 'number'
+    || !Number.isInteger(task.maxAttempts)
     || task.maxAttempts < 1
     || task.maxAttempts > 3) {
     errors.push('attempt_limit_exceeded')
