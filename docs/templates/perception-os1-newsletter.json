@@ -1,0 +1,33 @@
+{
+  "$comment": "PERCEPTION OS1 newsletter starter manifest. Replace TODO fields. This is a DRAFT, not proof any Stripe or Brevo resource exists.",
+  "schemaVersion": 1,
+  "system": "PERCEPTION OS1",
+  "newsletterId": "TODO_unique_newsletter_slug",
+  "projectId": "TODO_canonical_project_id",
+  "ownerAgentId": "TODO_worker_id",
+  "reviewerAgentId": "TODO_different_reviewer_id",
+  "brand": {
+    "name": "TODO_brand_name",
+    "domain": "example.invalid",
+    "senderEmail": "hello@example.invalid"
+  },
+  "brevo": {
+    "listId": null,
+    "listIsolationVerified": false,
+    "senderVerified": false,
+    "optInVerified": false,
+    "unsubscribeVerified": false
+  },
+  "stripe": {
+    "accountLabel": "Legacy Works Ventures (verify account before any action)",
+    "state": "planned",
+    "offerType": "free",
+    "productId": null,
+    "priceId": null,
+    "webhookVerified": false,
+    "portalVerified": false
+  },
+  "evidenceRefs": [],
+  "externallyApprovedActions": [],
+  "status": "draft"
+}
