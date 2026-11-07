@@ -115,7 +115,7 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
         vec3 discoverToPerceive = mix(discover, perceive, smoothstep(0.0, 1.0, experience));
         vec3 throughSearch = mix(discoverToPerceive, search, smoothstep(1.0, 2.0, experience));
         vec3 base = mix(throughSearch, forecast, smoothstep(2.0, 3.0, experience));
-        return mix(base, vec3(1.0), smoothstep(0.78, 1.0, t) * 0.35);
+        return mix(base, vec3(1.0), smoothstep(0.78, 1.0, t) * 0.12);
       }
 
       void main() {
@@ -159,7 +159,7 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
         float alpha = (ring * (0.48 + localEnergy * 0.42) + halo + floor) * authDim;
         alpha *= 1.0 - centerVoid * 0.24;
 
-        gl_FragColor = vec4(color * (0.62 + localEnergy * 0.62), clamp(alpha, 0.0, 0.95));
+        gl_FragColor = vec4(color * (0.52 + localEnergy * 0.45), clamp(alpha, 0.0, 0.82));
       }
     `
 
