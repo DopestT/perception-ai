@@ -5,6 +5,7 @@ import { ForecastPanel } from './ForecastPanel'
 import { GrowthOperatorPanel } from './GrowthOperatorPanel'
 import { TokenEfficiencyPanel } from './TokenEfficiencyPanel'
 import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPortal'
+import { PerceptionVision } from './PerceptionVision'
 import { resolveForecastInput, resolveFrontDoorInput } from './lib/front-door-intake'
 import {
   attachKalshiMarketSignal,
@@ -883,6 +884,8 @@ function App() {
 
           <div className="hero-content">
             <p className="hero-kicker">Tell Perception what you want to make real.</p>
+            <h1 className="hero-imagination-title">Your imagination. <em>Made possible.</em></h1>
+            <p className="hero-belief">We don’t replace human imagination. We give it the power to become reality.</p>
             <p className="hero-support">Perception understands the goal, builds a route, takes approved action, and verifies what actually changed.</p>
             <div className="experience-switcher" role="group" aria-label="Choose how Perception helps">
               {experienceModes.map((mode) => (
@@ -944,6 +947,7 @@ function App() {
               </button>
             </div>
             <p className="track-line">SEE <span>•</span> HEAR <span>•</span> UNDERSTAND <span>•</span> BUILD</p>
+            <a className="hero-explore" href="#vision">EXPLORE THE VISION <span aria-hidden="true">↓</span></a>
             {notice && <p className="hero-notice" role="status"><Check size={14} /> {notice}</p>}
             {error && !authOpen && <p className="hero-error" role="alert">{error}</p>}
           </div>
@@ -1270,6 +1274,14 @@ function App() {
           </section>
         </div>
       )}
+
+      <PerceptionVision onStart={(prompt, mode) => {
+        selectExperienceMode(mode)
+        setInput(prompt)
+        setPortalMode('focused')
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+        window.setTimeout(() => document.querySelector<HTMLInputElement>('.hero-input-shell input')?.focus(), 400)
+      }} />
 
       <footer className="home-footer">
         <span>PERCEPTION</span>
