@@ -6,6 +6,7 @@ import { GrowthOperatorPanel } from './GrowthOperatorPanel'
 import { TokenEfficiencyPanel } from './TokenEfficiencyPanel'
 import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPortal'
 import { AmbientFish } from './AmbientFish'
+import { ZCompanion } from './ZCompanion'
 import { PerceptionVision } from './PerceptionVision'
 import { resolveForecastInput, resolveFrontDoorInput } from './lib/front-door-intake'
 import {
@@ -162,6 +163,7 @@ function App() {
   const [password, setPassword] = useState('')
   const [authMode, setAuthMode] = useState<AuthMode>('signin')
   const [authOpen, setAuthOpen] = useState(false)
+  const [zOpen, setZOpen] = useState(false)
   const [authSent, setAuthSent] = useState(false)
   const [busy, setBusy] = useState(false)
   const [resolvingForecast, setResolvingForecast] = useState(false)
@@ -904,7 +906,7 @@ function App() {
       <section className={`portal-hero portal-hero--${portalMode} portal-hero--experience-${experienceMode}`}>
         <div className="portal-stage">
           <PlasmaPortal mode={portalMode} experienceMode={experienceMode} energy={typingEnergy} />
-          <AmbientFish experienceMode={experienceMode} />
+          <AmbientFish experienceMode={experienceMode} onSelect={() => setZOpen(true)} />
           <div className="portal-fallback" aria-hidden="true" />
           <div className="portal-reflection" aria-hidden="true" />
 
@@ -1325,6 +1327,28 @@ function App() {
           </section>
         </div>
       )}
+
+      <ZCompanion
+        experienceMode={experienceMode}
+        signedIn={Boolean(session)}
+        hasSavedWork={Boolean(session && world && latestObjective)}
+        savedWorkStatus={latestObjective?.status ?? null}
+        checkingWork={refreshingSavedWork}
+        isBusy={busy}
+        open={zOpen}
+        onOpenChange={setZOpen}
+        onStart={(mode, idea) => {
+          if (busy) return
+          selectExperienceMode(mode)
+          setInput(idea)
+          setPortalMode('focused')
+          window.scrollTo({ top: 0, behavior: 'smooth' })
+          window.setTimeout(() => document.querySelector<HTMLInputElement>('.hero-input-shell input')?.focus(), 260)
+        }}
+        onViewWork={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+        onCheckWork={() => { void refreshSavedWork() }}
+        onOpenAccount={() => { setPortalMode('auth'); setAuthOpen(true) }}
+      />
 
       <PerceptionVision onStart={(prompt, mode) => {
         selectExperienceMode(mode)
