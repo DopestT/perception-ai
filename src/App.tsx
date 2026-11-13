@@ -163,6 +163,7 @@ function App() {
   const [password, setPassword] = useState('')
   const [authMode, setAuthMode] = useState<AuthMode>('signin')
   const [authOpen, setAuthOpen] = useState(false)
+  const [zOpen, setZOpen] = useState(false)
   const [authSent, setAuthSent] = useState(false)
   const [busy, setBusy] = useState(false)
   const [resolvingForecast, setResolvingForecast] = useState(false)
@@ -905,7 +906,7 @@ function App() {
       <section className={`portal-hero portal-hero--${portalMode} portal-hero--experience-${experienceMode}`}>
         <div className="portal-stage">
           <PlasmaPortal mode={portalMode} experienceMode={experienceMode} energy={typingEnergy} />
-          <AmbientFish experienceMode={experienceMode} />
+          <AmbientFish experienceMode={experienceMode} onSelect={() => setZOpen(true)} />
           <div className="portal-fallback" aria-hidden="true" />
           <div className="portal-reflection" aria-hidden="true" />
 
@@ -1334,6 +1335,8 @@ function App() {
         savedWorkStatus={latestObjective?.status ?? null}
         checkingWork={refreshingSavedWork}
         isBusy={busy}
+        open={zOpen}
+        onOpenChange={setZOpen}
         onStart={(mode, idea) => {
           if (busy) return
           selectExperienceMode(mode)
