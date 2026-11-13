@@ -126,3 +126,5 @@
   .z-companion-trigger { transition: none; }
   .z-companion-trigger:hover { transform: none; }
 }
+
+.z-companion-busy { margin: 13px 0 0; padding: 10px 12px; font-size: 11px; line-height: 1.5; color: #b9d7d3; border-radius: 9px; border: 1px solid rgba(152,216,212,.14); background: rgba(108,161,162,.07); }
