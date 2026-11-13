@@ -1133,3 +1133,42 @@ button:disabled { cursor: default; }
   .starter-actions { gap: 6px; }
   .starter-action { padding: 7px 10px; }
 }
+
+
+/* Public-site navigation: a solid contrast-safe header on both dark plasma
+   and cream editorial sections (screenshots exposed invisible white text). */
+.home-header {
+  background: rgba(10, 29, 41, .97);
+  border-bottom: 1px solid rgba(210, 231, 232, .12);
+  box-shadow: 0 9px 35px rgba(0, 8, 17, .13);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+.home-public-nav { display: flex; align-items: center; gap: clamp(16px,2.8vw,42px); pointer-events: auto; }
+.home-public-nav a {
+  color: rgba(245,247,241,.85); font-size: 9px; font-weight: 790;
+  letter-spacing: .12em; text-decoration: none; white-space: nowrap;
+}
+.home-public-nav a:hover { color: #f2b895; }
+.home-public-nav a:focus-visible,.home-site-map a:focus-visible {
+  outline: 2px solid #f2b895; outline-offset: 4px;
+}
+.home-footer { flex-wrap: wrap; justify-content: space-between; padding: 30px 0; gap: 20px 30px; }
+.home-site-map { display: flex; align-items: center; gap: 13px 22px; flex-wrap: wrap; pointer-events: auto; }
+.home-site-map a { color: rgba(235,243,241,.7); font-size: 9px; font-weight: 730; text-decoration: none; letter-spacing: .08em; }
+.home-site-map a:hover { color: #f1b18c; }
+.home-footer p { flex-basis: 100%; text-align: left; }
+#vision, #possibilities, #how-it-works, #vision-principles { scroll-margin-top: 95px; }
+@media (max-width: 1100px) {
+  .home-public-nav { gap: 15px; }
+  .home-public-nav a { font-size: 8px; letter-spacing: .08em; }
+}
+@media (max-width: 890px) {
+  .home-public-nav a:not(:first-child) { display: none; }
+  .home-header { gap: 8px; }
+  .home-public-nav { margin-left: auto; margin-right: 13px; }
+}
+@media (max-width: 470px) {
+  .home-public-nav a { font-size: 8px; }
+  .home-footer { gap: 23px; }
+}
