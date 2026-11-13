@@ -45,6 +45,25 @@ describe('consumer homepage contract', () => {
     expect(appSource).toContain('<TokenEfficiencyPanel />')
   })
 
+  it('offers a rare motion-respecting fish without changing canvas interaction', () => {
+    const fishSource = readFileSync(new URL('./AmbientFish.tsx', import.meta.url), 'utf8')
+    expect(appSource).toContain('<AmbientFish experienceMode={experienceMode} />')
+    expect(fishSource).toContain("prefers-reduced-motion: reduce")
+    expect(fishSource).toContain('visibilitychange')
+    expect(visionStyles).toContain('pointer-events: none;')
+  })
+
+  it('shows only observed task state and never claims unattended execution', () => {
+    expect(appSource).toContain('YOUR WORK IS PRESERVED')
+    expect(appSource).toContain('Open your workspace to review evidence')
+    expect(appSource).toContain('VIEW MY WORK')
+    expect(appSource).toContain('CHECK STATUS')
+    expect(appSource).toContain('const refreshSavedWork = useCallback')
+    expect(appSource).toContain('getProjectWorld(world.project.id)')
+    expect(appSource).not.toContain('world.verifications.some((verification) => verification.passed) ? \' Verified evidence recorded\'')
+    expect(appSource).not.toContain('Automatically completed in background')
+  })
+
   it('recovers the animated background when WebGL is interrupted', () => {
     expect(plasmaSource).toContain('webglcontextlost')
     expect(plasmaSource).toContain('webglcontextrestored')
