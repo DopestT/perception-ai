@@ -15,6 +15,9 @@ describe('complete PERCEPTION public pages', () => {
   it('keeps authenticated work routes on the original home app', () => {
     expect(router).toContain("resolvePublicPage(window.location.pathname)")
     expect(router).toContain('<PublicPages page={publicPage} /> : <App />')
+    expect(router).toContain("const App = lazy(() => import('./App'))")
+    expect(router).toContain("await import('./PublicPages')")
+    expect(router).toContain('role="status"')
     expect(app).toContain('<PlasmaPortal mode={portalMode}')
     expect(app).toContain('<PerceptionVision onStart=')
   })
