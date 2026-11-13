@@ -6,6 +6,7 @@ const mainSource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 const plasmaSource = readFileSync(new URL('./PlasmaPortal.tsx', import.meta.url), 'utf8')
 const visionSource = readFileSync(new URL('./PerceptionVision.tsx', import.meta.url), 'utf8')
 const visionStyles = readFileSync(new URL('./perception-vision.css', import.meta.url), 'utf8')
+const shellStyles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
 
 function section(source, start, end) {
   const from = source.indexOf(start)
@@ -68,6 +69,26 @@ describe('consumer homepage contract', () => {
     expect(plasmaSource).toContain('webglcontextlost')
     expect(plasmaSource).toContain('webglcontextrestored')
     expect(plasmaSource).toContain('preventDefault()')
+  })
+
+  it('keeps mobile plasma motion precise, visible, and bounded for iPad Safari', () => {
+    expect(plasmaSource).toContain('#ifdef GL_FRAGMENT_PRECISION_HIGH')
+    expect(plasmaSource).toContain('precision highp float;')
+    expect(plasmaSource).toContain("const animationOrigin = performance.now()")
+    expect(plasmaSource).toContain('elapsedSeconds = (now - animationOrigin) / 1000')
+    expect(plasmaSource).toContain('supportsHighPrecision ? elapsedSeconds : elapsedSeconds % 32')
+    expect(plasmaSource).toContain('organicPulse')
+    expect(plasmaSource).toContain('maxPixels = lowPowerDevice ? 880_000 : 1_500_000')
+    expect(plasmaSource).toContain('lowPowerDevice ? 32 : 16')
+  })
+
+  it('offers an animated non-WebGL fallback instead of an invisible static ring', () => {
+    expect(plasmaSource).toContain('setContextLost(true)')
+    expect(plasmaSource).toContain('plasma-canvas--lost')
+    expect(shellStyles).toContain('.plasma-canvas--lost ~ .portal-fallback')
+    expect(shellStyles).toContain('@keyframes fallback-current')
+    expect(shellStyles).toContain('prefers-reduced-motion: reduce')
+    expect(shellStyles).toContain('pointer-events: none;')
   })
 
   it('progressively reveals result depth instead of dumping system internals', () => {
