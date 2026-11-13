@@ -1172,3 +1172,16 @@ button:disabled { cursor: default; }
   .home-public-nav a { font-size: 8px; }
   .home-footer { gap: 23px; }
 }
+
+.public-route-loading {
+  display: grid;
+  place-items: center;
+  min-height: 100svh;
+  padding: 32px;
+  background: #102936;
+  color: #f3f0e8;
+  text-align: center;
+  letter-spacing: .18em;
+  font-size: 12px;
+  font-weight: 800;
+}
