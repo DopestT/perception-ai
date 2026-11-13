@@ -198,5 +198,16 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  return json({ ok: true, selected: selected.length, results })
+  // A scheduled request can succeed while one or more source fetches fail.
+  // Preserve per-source details, but never report an all-green collector receipt.
+  const failed = results.filter((result) => result.status === 'failed').length
+  const succeeded = results.length - failed
+  return json({
+    ok: failed === 0,
+    partial: failed > 0 && succeeded > 0,
+    selected: selected.length,
+    succeeded,
+    failed,
+    results,
+  })
 })
