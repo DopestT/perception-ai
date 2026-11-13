@@ -3,6 +3,7 @@ import {
   planSwarm,
   reviewSwarmTask,
   SWARM_ROSTER,
+  SWARM_COLLABORATORS,
   type SwarmPolicy,
   type SwarmReviewReport,
   type SwarmTask,
@@ -85,6 +86,18 @@ describe('PERCEPTION governed swarm dry-run', () => {
     expect(SWARM_ROSTER.every(agent => agent.allowedPermissionLevels.every(p => p === 'P0' || p === 'P1'))).toBe(true)
   })
 
+  it('reserves Perseverance as a named teammate without inventing permissions or operational identity', () => {
+    expect(SWARM_COLLABORATORS).toEqual([{
+      name: 'Perseverance',
+      status: 'role_unmapped',
+      dispatchEnabled: false,
+      permissionLevels: [],
+    }])
+    expect(SWARM_ROSTER.some(agent => agent.agentId === 'Perseverance')).toBe(false)
+    expect(planSwarm([makeTask('x', 'Perseverance', { specialty: 'research' })], policy, now)
+      .violations).toContain('x: owner_role_or_permission_mismatch')
+  })
+
   it('produces a bounded, dependency-ordered plan with parallel specialists', () => {
     const plan = planSwarm([
       task,
@@ -156,6 +169,11 @@ describe('PERCEPTION governed swarm dry-run', () => {
       makeTask('ui-b', 'interface-worker', { allowedFiles: ['src/App.tsx'] }),
     ]
     expect(planSwarm(tasks, policy, now).violations).toContain('ui-b: file_owner_conflict')
+    const nested = [
+      makeTask('file-a', 'interface-worker', { allowedFiles: ['src/components'] }),
+      makeTask('file-b', 'interface-worker', { allowedFiles: ['src/components/Card.tsx'] }),
+    ]
+    expect(planSwarm(nested, policy, now).violations).toContain('file-b: file_owner_conflict')
   })
 
   it('rejects missing evidence, rollback plan and overly high budgets', () => {
@@ -200,6 +218,9 @@ describe('PERCEPTION governed swarm dry-run', () => {
       .toBe(false)
     expect(reviewSwarmTask(task, worker, { ...reviewer, independentEvidenceRefs: [] }).accepted)
       .toBe(false)
+    expect(reviewSwarmTask(task, worker, {
+      ...reviewer, independentEvidenceRefs: ['fixture://worker-observation'],
+    }).reason).toBe('reviewer_evidence_not_independent')
     expect(reviewSwarmTask(task, worker, { ...reviewer, approved: false }).accepted).toBe(false)
     expect(reviewSwarmTask(task, worker, { ...reviewer, testsPassed: ['scope test'] }).accepted)
       .toBe(false)
