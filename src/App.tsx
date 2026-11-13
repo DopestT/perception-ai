@@ -8,6 +8,7 @@ import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPort
 import { PerceptionVision } from './PerceptionVision'
 import './auth-refinement.css'
 import { resolveForecastInput, resolveFrontDoorInput } from './lib/front-door-intake'
+import { validateEmailPassword } from './lib/auth-input'
 import {
   attachKalshiMarketSignal,
   backendConfigured,
@@ -597,12 +598,9 @@ function App() {
       setError('Enter your email address.')
       return
     }
-    if (!submittedPassword) {
-      setError('Enter your password to continue.')
-      return
-    }
-    if (authMode === 'signup' && submittedPassword.length < 8) {
-      setError('Use at least eight characters for a new password.')
+    const passwordError = validateEmailPassword(submittedPassword, authMode === 'signup' ? 'signup' : 'signin')
+    if (passwordError) {
+      setError(passwordError)
       return
     }
 
