@@ -8,7 +8,7 @@ const styles = readFileSync(new URL('./z-companion.css', import.meta.url), 'utf8
 
 describe('PERCEPTION Z fish helper — opt-in and evidence-honest', () => {
   it('preserves the approved occasional translucent fish rather than replacing it', () => {
-    expect(app).toContain('<AmbientFish experienceMode={experienceMode} />')
+    expect(app).toContain('<AmbientFish experienceMode={experienceMode} onSelect={() => setZOpen(true)} />')
     expect(fish).toContain('encounterDuration(passage)')
     expect(fish).toContain('encounterDelay(passage)')
     expect(fish).toContain('prefers-reduced-motion: reduce')
@@ -16,7 +16,8 @@ describe('PERCEPTION Z fish helper — opt-in and evidence-honest', () => {
   })
 
   it('provides a small user-invoked accessible trigger with no auto-opening behavior', () => {
-    expect(companion).toContain('useState(false)')
+    expect(app).toContain('const [zOpen, setZOpen] = useState(false)')
+    expect(companion).toContain('open, onOpenChange')
     expect(companion).toContain('Ask Z the fish helper')
     expect(companion).toContain('aria-expanded={open}')
     expect(companion).toContain('aria-controls="z-companion-panel"')
@@ -24,6 +25,20 @@ describe('PERCEPTION Z fish helper — opt-in and evidence-honest', () => {
     expect(companion).toContain("event.key === 'Escape'")
     expect(companion).not.toContain('setTimeout(() => setOpen(true)')
     expect(styles).toContain('.z-companion-panel[hidden] { display: none !important; }')
+  })
+
+  it('lets people tap the actual swimming fish, not just a separate fixed help control', () => {
+    const canvasStyles = readFileSync(new URL('./perception-vision.css', import.meta.url), 'utf8')
+    expect(fish).toContain('className="ambient-fish-hit-target"')
+    expect(fish).toContain('aria-label="Ask Z, the swimming fish, for help"')
+    expect(fish).toContain('onClick={onSelect}')
+    expect(fish).toContain('showTarget(path.x * width, path.y * height, size)')
+    expect(fish).toContain("target.style.pointerEvents = 'none'")
+    expect(fish).toContain("target.style.pointerEvents = 'auto'")
+    expect(canvasStyles).toContain('.ambient-fish-hit-target')
+    expect(canvasStyles).toContain('z-index: 5')
+    expect(canvasStyles).toContain('.ambient-fish-hit-target:focus-visible')
+    expect(app).toContain('onOpenChange={setZOpen}')
   })
 
   it('does not invent a separate AI, API, workflow engine or tracking service', () => {
@@ -46,7 +61,7 @@ describe('PERCEPTION Z fish helper — opt-in and evidence-honest', () => {
     expect(app).toContain("onOpenAccount={() => { setPortalMode('auth'); setAuthOpen(true) }}")
   })
 
-  it('never auto-submits a user's text', () => {
+  it("never auto-submits a user's text", () => {
     expect(companion).toContain('event.preventDefault()')
     expect(companion).toContain('const idea = draft.trim()')
     expect(companion).toContain('takeToFrontDoor(experienceMode, idea.slice(0, 500))')
