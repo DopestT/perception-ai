@@ -148,7 +148,9 @@ export function createSwarmCheckpoint(
     || !safeList(state.artifactRefs, MAX_ARTIFACT_REFS)) {
     throw new Error('checkpoint_payload_invalid')
   }
-  if (state.expectedRevision !== undefined && (!prior || state.expectedRevision !== prior.revision)) {
+  // A caller must always prove which prior revision it is extending. This
+  // guards against accidental last-write-wins when two temporary bots resume.
+  if (prior ? state.expectedRevision !== prior.revision : state.expectedRevision !== undefined) {
     throw new Error('checkpoint_revision_conflict')
   }
   if (prior) {
