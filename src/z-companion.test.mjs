@@ -12,7 +12,7 @@ describe('PERCEPTION Z fish helper — opt-in and evidence-honest', () => {
     expect(fish).toContain('encounterDuration(passage)')
     expect(fish).toContain('encounterDelay(passage)')
     expect(fish).toContain('prefers-reduced-motion: reduce')
-    expect(fish).toContain("pointer-events")
+    expect(fish).toContain('target.style.pointerEvents')
   })
 
   it('provides a small user-invoked accessible trigger with no auto-opening behavior', () => {
