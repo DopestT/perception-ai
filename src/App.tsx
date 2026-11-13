@@ -1333,6 +1333,7 @@ function App() {
         hasSavedWork={Boolean(session && world && latestObjective)}
         savedWorkStatus={latestObjective?.status ?? null}
         checkingWork={refreshingSavedWork}
+        isBusy={busy}
         onStart={(mode, idea) => {
           if (busy) return
           selectExperienceMode(mode)
