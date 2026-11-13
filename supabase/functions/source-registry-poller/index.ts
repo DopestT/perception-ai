@@ -79,6 +79,38 @@ async function fetchPublicHead(externalId: string) {
       const remaining = response.headers.get('x-ratelimit-remaining')
       await response.body?.cancel()
       if ((response.status === 403 || response.status === 429) && remaining === '0') throw new Error('GitHub public API rate limit')
+      if (response.status === 409) {
+        // GitHub returns 409 for an empty repository. Verify it independently
+        // before recording a metadata-only observation; never invent a commit.
+        const metadataReply = await fetch(
+          `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+          {
+            redirect: 'error',
+            signal: controller.signal,
+            headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'Perception-Source-Registry-Poller/1.0' },
+          },
+        )
+        if (!metadataReply.ok) {
+          await metadataReply.body?.cancel()
+          throw new Error(`GitHub repository metadata HTTP ${metadataReply.status}`)
+        }
+        const meta = JSON.parse(await readBounded(metadataReply)) as {
+          private?: boolean, full_name?: string, size?: number, updated_at?: string
+        }
+        if (meta.private !== false
+          || meta.full_name?.toLowerCase() !== `${owner}/${repo}`.toLowerCase()
+          || meta.size !== 0
+          || !meta.updated_at
+          || Number.isNaN(Date.parse(meta.updated_at))) {
+          throw new Error('GitHub HTTP 409 without verified empty public repository')
+        }
+        return {
+          sha: null,
+          date: new Date(meta.updated_at).toISOString(),
+          summary: 'Public GitHub repository has no commits',
+          sourceUrl: `https://github.com/${owner}/${repo}`,
+        }
+      }
       if (response.status === 404) throw new Error('GitHub repo unavailable publicly (missing or private)')
       throw new Error(`GitHub HTTP ${response.status}`)
     }
@@ -137,7 +169,7 @@ Deno.serve(async (req: Request) => {
   for (const source of selected) {
     try {
       const head = await fetchPublicHead(source.external_id)
-      const hash = await sha256(`github:\0${source.external_id}\0${head.sha}`)
+      const hash = await sha256(`github:\0${source.external_id}\0${head.sha ?? `empty:${head.date}`}`)
       const { data: outcome, error: ingestError } = await admin.rpc('perception_ingest_project_observation_internal', {
         p_user_id: source.user_id,
         p_project_id: null, // intentionally global evidence only; NEVER auto-bind to a project
@@ -148,11 +180,11 @@ Deno.serve(async (req: Request) => {
         p_locator: source.locator,
         p_sync_mode: 'poll',
         p_source_metadata: { registry_poller: 'public_github_v1' },
-        p_observation_kind: 'github_head_commit',
-        p_external_version: head.sha,
+        p_observation_kind: head.sha ? 'github_head_commit' : 'github_empty_repo',
+        p_external_version: head.sha ?? head.date,
         p_content_hash: hash,
         p_summary: `${source.external_id}: ${head.summary}`.slice(0, 3_000),
-        p_payload: { sha: head.sha, committed_at: head.date },
+        p_payload: { sha: head.sha, observed_at: head.date, empty_repository: head.sha === null },
         p_source_ref: head.sourceUrl,
         p_observed_at: head.date,
       })
