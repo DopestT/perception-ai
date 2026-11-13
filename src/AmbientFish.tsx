@@ -110,18 +110,40 @@ function drawCreature(
 }
 
 /**
- * Lightweight overlay behind all interactive controls.
- * It never reacts to, records, or profiles a visitor's actions.
+ * Z's decorative fish continues to swim behind the hero UI; a small invisible
+ * hit target tracks its visible position so touch/pointer/keyboard users may
+ * open help without activating the underlying idea input.
  */
-export function AmbientFish({ experienceMode }: { experienceMode: ExperienceMode }) {
+export function AmbientFish({ experienceMode, onSelect }: {
+  experienceMode: ExperienceMode
+  onSelect: () => void
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const targetRef = useRef<HTMLButtonElement | null>(null)
   const modeRef = useRef(experienceMode)
   useEffect(() => { modeRef.current = experienceMode }, [experienceMode])
 
   useEffect(() => {
     const canvas = canvasRef.current
+    const target = targetRef.current
     const context = canvas?.getContext('2d', { alpha: true })
-    if (!canvas || !context) return
+    if (!canvas || !context || !target) return
+    const hideTarget = () => {
+      target.style.visibility = 'hidden'
+      target.style.pointerEvents = 'none'
+      target.tabIndex = -1
+    }
+    const showTarget = (x: number, y: number, size: number) => {
+      const hitWidth = Math.max(68, size * 1.35)
+      const hitHeight = Math.max(48, size * .82)
+      target.style.width = `${hitWidth}px`
+      target.style.height = `${hitHeight}px`
+      target.style.transform = `translate3d(${x - hitWidth / 2}px, ${y - hitHeight / 2}px, 0)`
+      target.style.visibility = 'visible'
+      target.style.pointerEvents = 'auto'
+      target.tabIndex = 0
+    }
+    hideTarget()
 
     const media = window.matchMedia('(prefers-reduced-motion: reduce)')
     let reduceMotion = media.matches
@@ -145,6 +167,7 @@ export function AmbientFish({ experienceMode }: { experienceMode: ExperienceMode
     }
     const onVisibility = () => {
       visible = document.visibilityState === 'visible'
+      if (!visible) hideTarget()
       if (visible && nextEncounter < performance.now() - 30000) {
         nextEncounter = performance.now() + 4000
         encounterStart = 0
@@ -153,10 +176,11 @@ export function AmbientFish({ experienceMode }: { experienceMode: ExperienceMode
     const onMotionChange = () => {
       reduceMotion = media.matches
       context.clearRect(0, 0, width, height)
+      if (reduceMotion) hideTarget()
     }
     const intersection = new IntersectionObserver((entries) => {
       inView = entries[0]?.isIntersecting ?? false
-      if (!inView) context.clearRect(0, 0, width, height)
+      if (!inView) { context.clearRect(0, 0, width, height); hideTarget() }
     }, { threshold: 0 })
     intersection.observe(canvas)
     media.addEventListener('change', onMotionChange)
@@ -167,11 +191,12 @@ export function AmbientFish({ experienceMode }: { experienceMode: ExperienceMode
 
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame)
-      if (!visible || !inView || reduceMotion || now - lastFrame < 32) return
+      if (!visible || !inView || reduceMotion) { hideTarget(); return }
+      if (now - lastFrame < 32) return
       lastFrame = now
       context.clearRect(0, 0, width, height)
       if (!encounterStart && now >= nextEncounter) encounterStart = now
-      if (!encounterStart) return
+      if (!encounterStart) { hideTarget(); return }
 
       const duration = encounterDuration(passage)
       const progress = (now - encounterStart) / duration
@@ -179,6 +204,7 @@ export function AmbientFish({ experienceMode }: { experienceMode: ExperienceMode
         passage += 1
         encounterStart = 0
         nextEncounter = now + encounterDelay(passage)
+        hideTarget()
         return
       }
 
@@ -194,15 +220,34 @@ export function AmbientFish({ experienceMode }: { experienceMode: ExperienceMode
       const heading = Math.atan2(Math.sin(path.slope) * height, Math.cos(path.slope) * width)
       drawCreature(context, path.x * width, path.y * height, size,
         heading, now / 1000 * 10.5, [base, lighter], path.opacity)
+      // Avoid invisible click-capture and never intercept the centered hero
+      // controls (which have higher stacking order than this hit target).
+      if (path.opacity >= .55
+          && path.x >= 0.02 && path.x <= .98
+          && path.y >= 0.08 && path.y <= .92) {
+        showTarget(path.x * width, path.y * height, size)
+      } else hideTarget()
     }
     raf = requestAnimationFrame(frame)
     return () => {
       cancelAnimationFrame(raf)
+      hideTarget()
       observer.disconnect()
       intersection.disconnect()
       media.removeEventListener('change', onMotionChange)
       document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [])
-  return <canvas className="ambient-fish-canvas" ref={canvasRef} aria-hidden="true" />
+  return <>
+    <canvas className="ambient-fish-canvas" ref={canvasRef} aria-hidden="true" />
+    <button
+      ref={targetRef}
+      className="ambient-fish-hit-target"
+      type="button"
+      tabIndex={-1}
+      aria-label="Ask Z, the swimming fish, for help"
+      title="Tap Z for help"
+      onClick={onSelect}
+    />
+  </>
 }
