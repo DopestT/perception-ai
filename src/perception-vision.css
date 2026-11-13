@@ -190,3 +190,34 @@
 @media (prefers-reduced-motion: reduce) {
   .ambient-fish-canvas { display: none; }
 }
+
+/* Real saved objective status; no suggestion of an unattended worker where none is verified. */
+.companion-work-rail {
+  width: min(1100px, calc(100% - 40px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  margin: 32px auto 0;
+  padding: 19px 24px;
+  border: 1px solid rgba(132, 206, 215, .22);
+  border-radius: 16px;
+  color: #f1f4f0;
+  background: linear-gradient(110deg, rgba(18, 50, 66, .7), rgba(16, 30, 43, .82));
+}
+.companion-work-rail__main { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.companion-work-rail__eyebrow { display: flex; align-items: center; gap: 9px; color: #b6d2d0; font-size: 9px; font-weight: 790; letter-spacing: .14em; }
+.companion-work-rail__dot { height: 7px; width: 7px; border-radius: 50%; background: #83c6b8; }
+.companion-work-rail__main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 590; }
+.companion-work-rail__status { font-size: 11px; color: #a9bcc1; line-height: 1.4; }
+.companion-work-rail > button {
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: center; gap: 9px;
+  padding: 12px 15px; border: 1px solid rgba(164, 226, 218, .28); border-radius: 9px;
+  color: #deeeea; background: rgba(91, 177, 169, .10);
+  font-size: 10px; font-weight: 790; letter-spacing: .11em;
+}
+.companion-work-rail > button:hover { background: rgba(91, 177, 169, .22); }
+@media (max-width: 620px) {
+  .companion-work-rail { align-items: stretch; flex-direction: column; gap: 15px; padding: 17px; }
+  .companion-work-rail > button { align-self: flex-start; }
+}
