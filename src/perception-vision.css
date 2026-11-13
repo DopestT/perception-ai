@@ -231,7 +231,7 @@
    always takes priority. Invisible when no fish is within the viewport. */
 .ambient-fish-hit-target {
   position: absolute;
-  z-index: 5;
+  z-index: 9;
   left: 0;
   top: 0;
   display: block;
