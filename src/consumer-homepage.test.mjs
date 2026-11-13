@@ -45,6 +45,21 @@ describe('consumer homepage contract', () => {
     expect(appSource).toContain('<TokenEfficiencyPanel />')
   })
 
+  it('offers a rare motion-respecting fish without changing canvas interaction', () => {
+    const fishSource = readFileSync(new URL('./AmbientFish.tsx', import.meta.url), 'utf8')
+    expect(appSource).toContain('<AmbientFish experienceMode={experienceMode} />')
+    expect(fishSource).toContain("prefers-reduced-motion: reduce")
+    expect(fishSource).toContain('visibilitychange')
+    expect(visionStyles).toContain('pointer-events: none;')
+  })
+
+  it('shows only observed task state and never claims unattended execution', () => {
+    expect(appSource).toContain('YOUR WORK IS PRESERVED')
+    expect(appSource).toContain('Verification still needed')
+    expect(appSource).toContain('VIEW MY WORK')
+    expect(appSource).not.toContain('Automatically completed in background')
+  })
+
   it('recovers the animated background when WebGL is interrupted', () => {
     expect(plasmaSource).toContain('webglcontextlost')
     expect(plasmaSource).toContain('webglcontextrestored')
