@@ -36,8 +36,8 @@ describe('ambient fish: organic but bounded movement', () => {
   })
 
   it('uses frame-rate independent exponential damping for organic transitions', () => {
-    const sixtyFrames = Array.from({ length: 60 }).reduce((n) => damp(n, 1, 1 / 60), 0)
-    const thirtyFrames = Array.from({ length: 30 }).reduce((n) => damp(n, 1, 1 / 30), 0)
+    const sixtyFrames = Array.from({ length: 60 }, () => 0).reduce((n) => damp(n, 1, 1 / 60), 0)
+    const thirtyFrames = Array.from({ length: 30 }, () => 0).reduce((n) => damp(n, 1, 1 / 30), 0)
     expect(sixtyFrames).toBeCloseTo(thirtyFrames, 6)
     expect(damp(0, 1, -12)).toBe(0)
   })
