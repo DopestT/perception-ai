@@ -154,3 +154,22 @@
   .hero-belief { max-width: 345px; }
   .hero-content { margin-top: 46px; }
 }
+
+
+.hero-explore {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 7px 3px;
+  color: rgba(250,242,225,.72);
+  border-bottom: 1px solid rgba(250,242,225,.28);
+  font-size: 9px;
+  font-weight: 780;
+  letter-spacing: .15em;
+  text-decoration: none;
+  transition: color .2s ease, border-color .2s ease;
+}
+.hero-explore:hover { color: #f4b995; border-bottom-color: #f4b995; }
+.hero-explore:focus-visible { outline: 2px solid #f4b995; outline-offset: 4px; }
+@media (max-width: 620px) { .hero-explore { margin-top: 10px; } }
