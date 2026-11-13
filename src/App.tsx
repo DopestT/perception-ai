@@ -5,6 +5,7 @@ import { ForecastPanel } from './ForecastPanel'
 import { GrowthOperatorPanel } from './GrowthOperatorPanel'
 import { TokenEfficiencyPanel } from './TokenEfficiencyPanel'
 import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPortal'
+import { AmbientFish } from './AmbientFish'
 import { PerceptionVision } from './PerceptionVision'
 import { resolveForecastInput, resolveFrontDoorInput } from './lib/front-door-intake'
 import {
@@ -879,6 +880,7 @@ function App() {
       <section className={`portal-hero portal-hero--${portalMode} portal-hero--experience-${experienceMode}`}>
         <div className="portal-stage">
           <PlasmaPortal mode={portalMode} experienceMode={experienceMode} energy={typingEnergy} />
+          <AmbientFish experienceMode={experienceMode} />
           <div className="portal-fallback" aria-hidden="true" />
           <div className="portal-reflection" aria-hidden="true" />
 
