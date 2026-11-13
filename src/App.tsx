@@ -169,6 +169,9 @@ function App() {
   const [runningIntelligence, setRunningIntelligence] = useState(false)
   const [runningOperatorTest, setRunningOperatorTest] = useState(false)
   const [continuingRoute, setContinuingRoute] = useState(false)
+  const [refreshingSavedWork, setRefreshingSavedWork] = useState(false)
+  const [savedWorkCheckedAt, setSavedWorkCheckedAt] = useState<string | null>(null)
+  const [savedWorkError, setSavedWorkError] = useState('')
   const [operatorPlan, setOperatorPlan] = useState<GitHubOperatorSelfTestPlan | null>(null)
   const [registeringPasskey, setRegisteringPasskey] = useState(false)
   const [marketNote, setMarketNote] = useState('')
@@ -211,6 +214,27 @@ function App() {
     setLedgers(latest ? await getProjectLedgers(latest.project.id) : null)
     setOperatorPlan(pendingApproval)
   }, [])
+
+  const refreshSavedWork = useCallback(async () => {
+    if (!session || !world || refreshingSavedWork || busy) return
+    setRefreshingSavedWork(true)
+    setSavedWorkError('')
+    try {
+      // Read-only refresh through existing authenticated Project World RPCs.
+      // This does not dispatch a worker, grant permission, or imply completion.
+      const [updatedWorld, updatedLedgers] = await Promise.all([
+        getProjectWorld(world.project.id),
+        getProjectLedgers(world.project.id),
+      ])
+      setWorld(updatedWorld)
+      setLedgers(updatedLedgers)
+      setSavedWorkCheckedAt(new Date().toISOString())
+    } catch (cause) {
+      setSavedWorkError(cause instanceof Error ? cause.message : 'Could not refresh saved work.')
+    } finally {
+      setRefreshingSavedWork(false)
+    }
+  }, [session, world, refreshingSavedWork, busy])
 
   const loadForecastState = useCallback(async () => {
     try {
@@ -962,13 +986,22 @@ function App() {
             <span className="companion-work-rail__eyebrow"><span aria-hidden="true" className="companion-work-rail__dot" /> YOUR WORK IS PRESERVED</span>
             <strong>{latestObjective.statement}</strong>
             <span className="companion-work-rail__status">
-              Current status: {(latestObjective.status || 'in progress').replace(/_/g, ' ')} ·
-              {world.verifications.some((verification) => verification.passed) ? ' Verified evidence recorded' : ' Verification still needed'}
+              Current status: {(latestObjective.status || 'unknown').replace(/_/g, ' ')} ·
+              Open your workspace to review evidence before treating work as complete.
             </span>
           </div>
-          <button type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
-            VIEW MY WORK <Clock3 size={15} aria-hidden="true" />
-          </button>
+          <div className="companion-work-rail__actions">
+            <button type="button" onClick={refreshSavedWork} disabled={refreshingSavedWork || busy} aria-busy={refreshingSavedWork}>
+              {refreshingSavedWork ? 'CHECKING…' : 'CHECK STATUS'} <Clock3 size={15} aria-hidden="true" />
+            </button>
+            <button type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+              VIEW MY WORK
+            </button>
+            {savedWorkCheckedAt && (
+              <small className="companion-work-rail__checked">Checked {new Date(savedWorkCheckedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</small>
+            )}
+            {savedWorkError && <small role="alert" className="companion-work-rail__error">{savedWorkError}</small>}
+          </div>
         </aside>
       )}
 
