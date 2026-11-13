@@ -956,6 +956,22 @@ function App() {
         </div>
       </section>
 
+      {session && latestObjective && world && (
+        <aside className="companion-work-rail" aria-label="Your saved Perception work">
+          <div className="companion-work-rail__main">
+            <span className="companion-work-rail__eyebrow"><span aria-hidden="true" className="companion-work-rail__dot" /> YOUR WORK IS PRESERVED</span>
+            <strong>{latestObjective.statement}</strong>
+            <span className="companion-work-rail__status">
+              Current status: {(latestObjective.status || 'in progress').replace(/_/g, ' ')} ·
+              {world.verifications.some((verification) => verification.passed) ? ' Verified evidence recorded' : ' Verification still needed'}
+            </span>
+          </div>
+          <button type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+            VIEW MY WORK <Clock3 size={15} aria-hidden="true" />
+          </button>
+        </aside>
+      )}
+
       {world && (
         <section className="world-section result-section" id="project-world">
           <div className="result-intro">
