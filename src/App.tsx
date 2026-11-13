@@ -157,7 +157,10 @@ function App() {
   const [forecast, setForecast] = useState<Forecast | null>(null)
   const [calibration, setCalibration] = useState<ForecastCalibration | null>(null)
   const [forecastDeadline, setForecastDeadline] = useState(defaultForecastDeadline)
-  const [input, setInput] = useState('')
+  // Generic starter prompts from public editorial pages never auto-submit.
+  const [input, setInput] = useState(() =>
+    new URLSearchParams(window.location.search).get('idea')?.slice(0, 500) ?? ''
+  )
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [authMode, setAuthMode] = useState<AuthMode>('signin')
@@ -181,7 +184,10 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
-  const [experienceMode, setExperienceMode] = useState<ExperienceMode>('perceive')
+  const [experienceMode, setExperienceMode] = useState<ExperienceMode>(() => {
+    const mode = new URLSearchParams(window.location.search).get('mode')
+    return mode === 'discover' || mode === 'search' || mode === 'forecast' ? mode : 'perceive'
+  })
   const [portalMode, setPortalMode] = useState<PlasmaMode>('idle')
   const [typingEnergy, setTypingEnergy] = useState(0)
   const [resultDepth, setResultDepth] = useState<'summary' | 'depth'>('summary')
@@ -886,6 +892,12 @@ function App() {
           <span className="wordmark-mark">P</span>
           <span>PERCEPTION</span>
         </button>
+        <nav className="home-public-nav" aria-label="Explore PERCEPTION">
+          <a href="/possibilities">EXPLORE</a>
+          <a href="/how-it-works">HOW IT WORKS</a>
+          <a href="/about">ABOUT</a>
+          <a href="/test-lab">TEST LAB</a>
+        </nav>
         {session ? (
           <div className="account-actions">
             <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>MY WORK</button>
@@ -1336,6 +1348,16 @@ function App() {
 
       <footer className="home-footer">
         <span>PERCEPTION</span>
+        <nav className="home-site-map" aria-label="PERCEPTION site pages">
+          <a href="/about">ABOUT</a>
+          <a href="/possibilities">POSSIBILITIES</a>
+          <a href="/how-it-works">HOW IT WORKS</a>
+          <a href="/your-work">YOUR WORK</a>
+          <a href="/trust">TRUST</a>
+          <a href="/agents">AGENTS</a>
+          <a href="/test-lab">TEST LAB</a>
+          <a href="/faq">FAQ</a>
+        </nav>
         <p>Workers produce evidence. Perception owns truth. Verified effects update Project World.</p>
       </footer>
     </main>

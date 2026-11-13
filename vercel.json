@@ -1,0 +1,36 @@
+{
+  "rewrites": [
+    {
+      "source": "/about",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/possibilities",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/how-it-works",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/your-work",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/trust",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/agents",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/test-lab",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/faq",
+      "destination": "/index.html"
+    }
+  ]
+}
