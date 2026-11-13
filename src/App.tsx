@@ -28,6 +28,7 @@ import {
   resumeObjective,
   signInWithOAuthProvider,
   signInWithPasskey,
+  startGuestSession,
   signInWithPassword,
   signUpWithPassword,
   runAutonomousForecast,
@@ -533,12 +534,25 @@ function App() {
     }
 
     if (!session) {
+      // Store the exact intent before anonymous sign-in; SIGNED_IN hydration
+      // consumes it once. Do not also submit here or the objective may duplicate.
       savePendingObjective(frontDoor.statement, experienceMode, experienceMode === 'forecast' ? forecastDeadline : undefined)
       setError('')
-      setNotice('Sign in once to continue and keep your work across devices.')
-      setAuthMode('signup')
-      setPortalMode('auth')
-      setAuthOpen(true)
+      setNotice('Starting your free session…')
+      setPortalMode('charging')
+      setBusy(true)
+      try {
+        await startGuestSession()
+        // The auth listener hydrates the new session and processes the saved intent.
+      } catch {
+        // Never claim free mode works when anonymous auth is disabled or unavailable.
+        setNotice('Free mode is unavailable here right now. Your idea is saved in this browser; sign in to continue.')
+        setAuthMode('signup')
+        setPortalMode('auth')
+        setAuthOpen(true)
+      } finally {
+        setBusy(false)
+      }
       return
     }
 
@@ -891,12 +905,18 @@ function App() {
         </button>
         {session ? (
           <div className="account-actions">
-            <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>MY WORK</button>
-            <button className="quiet-action" type="button" onClick={() => {
-              setResultDepth('depth')
-              setShowSystem(true)
-              window.setTimeout(() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
-            }}>SYSTEM</button>
+            {session.user.is_anonymous ? (
+              <span className="guest-session-pill">TRY MODE</span>
+            ) : (
+              <>
+                <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>MY WORK</button>
+                <button className="quiet-action" type="button" onClick={() => {
+                  setResultDepth('depth')
+                  setShowSystem(true)
+                  window.setTimeout(() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0)
+                }}>SYSTEM</button>
+              </>
+            )}
             <button className="icon-action" type="button" onClick={logout} aria-label="Sign out"><LogOut size={15} /></button>
           </div>
         ) : (
@@ -976,6 +996,7 @@ function App() {
               </button>
             </div>
             <p className="track-line">SEE <span>•</span> HEAR <span>•</span> UNDERSTAND <span>•</span> BUILD</p>
+            {session?.user.is_anonymous && <p className="guest-session-note">TRY MODE · NO ACCOUNT NEEDED · YOUR WORK MAY BE LOST IF YOU SIGN OUT OR CLEAR BROWSER DATA</p>}
             <a className="hero-explore" href="#vision">EXPLORE THE VISION <span aria-hidden="true">↓</span></a>
             {notice && <p className="hero-notice" role="status"><Check size={14} /> {notice}</p>}
             {error && !authOpen && <p className="hero-error" role="alert">{error}</p>}
@@ -1026,7 +1047,7 @@ function App() {
             </p>
             <div className="result-actions">
               <button type="button" onClick={() => setResultDepth('depth')}>GO DEEPER</button>
-              {(activeForecast || canContinueObjective) && (
+              {!session?.user.is_anonymous && (activeForecast || canContinueObjective) && (
                 <button
                   type="button"
                   className="result-action-primary"
@@ -1063,7 +1084,9 @@ function App() {
               <div className="result-inspectors">
                 <details>
                   <summary>Details</summary>
-                  {activeForecast ? (
+                  {activeForecast && session?.user.is_anonymous ? (
+                    <p>Advanced forecast actions require an account. Your current result is still available in this session.</p>
+                  ) : activeForecast ? (
                     <ForecastPanel
                       forecast={activeForecast}
                       calibration={calibration}
@@ -1119,16 +1142,20 @@ function App() {
                   <summary>System</summary>
                   {showSystem && (
                     <div className="system-surface" id="system-surface">
-                      <div className="system-actions">
-                        <button className="quiet-action" type="button" onClick={handlePrepareOperatorProof} disabled={runningOperatorTest || busy}>
-                          {runningOperatorTest ? 'PREPARING…' : 'PREPARE OPERATOR PROOF'}
-                        </button>
-                        <button className="quiet-action" type="button" onClick={handleRegisterPasskey} disabled={registeringPasskey}>
-                          {registeringPasskey ? 'ADDING PASSKEY…' : 'ENABLE PASSKEY'}
-                        </button>
-                      </div>
-                      <TokenEfficiencyPanel />
-                      <GrowthOperatorPanel projectId={world.project.id} />
+                      {!session?.user.is_anonymous && (
+                        <>
+                          <div className="system-actions">
+                            <button className="quiet-action" type="button" onClick={handlePrepareOperatorProof} disabled={runningOperatorTest || busy}>
+                              {runningOperatorTest ? 'PREPARING…' : 'PREPARE OPERATOR PROOF'}
+                            </button>
+                            <button className="quiet-action" type="button" onClick={handleRegisterPasskey} disabled={registeringPasskey}>
+                              {registeringPasskey ? 'ADDING PASSKEY…' : 'ENABLE PASSKEY'}
+                            </button>
+                          </div>
+                          <TokenEfficiencyPanel />
+                          <GrowthOperatorPanel projectId={world.project.id} />
+                        </>
+                      )}
                       {ledgers && (
                         <>
                           <div className="trust-summary" aria-label="Perception trust state">
