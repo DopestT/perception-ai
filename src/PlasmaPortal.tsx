@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { damp } from './lib/ambient-fish-motion'
 
 export type PlasmaMode = 'idle' | 'hover' | 'focused' | 'typing' | 'charging' | 'absorbing' | 'auth' | 'transitioning'
 export type ExperienceMode = 'discover' | 'perceive' | 'search' | 'forecast'
@@ -129,10 +130,18 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
 
         float speed = 0.085 + uEnergy * 0.08 + uSubmit * 0.14;
         float t = uTime * speed;
-        vec2 warp = uv;
+        // Slowly advected eddies move along a coherent fluid current.
+        // Keep turbulence gentle so the form feels buoyant rather than jittery.
+        vec2 current = vec2(
+          0.021 * sin(uv.y * 3.1 + t * 0.68),
+          0.021 * cos(uv.x * 2.4 - t * 0.46)
+        );
+        vec2 warp = uv + current;
         float n1 = fbm(warp * 2.0 + vec2(t, -t * 0.55));
         float n2 = fbm(warp * 4.5 + vec2(-t * 0.7, t * 0.42));
+        float eddy = sin(atan(warp.y, warp.x) * 2.5 + t * 0.4 + (n1 - 0.5) * 1.9);
         warp += vec2(n1 - 0.5, n2 - 0.5) * (0.12 + uEnergy * 0.04 + pointerInfluence);
+        warp += vec2(n2 - 0.5, -(n1 - 0.5)) * (0.021 * eddy);
 
         float xScale = 0.96 - uSubmit * 0.12;
         float yScale = 0.58 - uSubmit * 0.06;
@@ -256,19 +265,19 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
       resize()
       const dt = Math.min((now - start) / 1000, 0.032)
       start = now
-      px += (tx - px) * Math.min(1, dt * 2.4)
-      py += (ty - py) * Math.min(1, dt * 2.4)
+      px = damp(px, tx, dt, 2.4)
+      py = damp(py, ty, dt, 2.4)
 
       const currentMode = modeRef.current
       const targetFocus = currentMode === 'focused' || currentMode === 'typing' ? 1 : 0
       const targetSubmit = currentMode === 'charging' ? 0.58 : currentMode === 'absorbing' || currentMode === 'transitioning' ? 1 : 0
       const targetAuth = currentMode === 'auth' ? 1 : 0
       const targetExperience = experienceValues[experienceRef.current]
-      smoothEnergy += (energyRef.current - smoothEnergy) * 0.08
-      smoothFocus += (targetFocus - smoothFocus) * 0.07
-      smoothSubmit += (targetSubmit - smoothSubmit) * 0.055
-      smoothAuth += (targetAuth - smoothAuth) * 0.06
-      smoothExperience = reducedMotion ? targetExperience : smoothExperience + (targetExperience - smoothExperience) * 0.055
+      smoothEnergy = damp(smoothEnergy, energyRef.current, dt, 5.0)
+      smoothFocus = damp(smoothFocus, targetFocus, dt, 4.3)
+      smoothSubmit = damp(smoothSubmit, targetSubmit, dt, 3.35)
+      smoothAuth = damp(smoothAuth, targetAuth, dt, 3.7)
+      smoothExperience = reducedMotion ? targetExperience : damp(smoothExperience, targetExperience, dt, 3.35)
 
       gl.uniform2f(resolution, canvas.width, canvas.height)
       gl.uniform2f(pointerUniform, px, py)
