@@ -1,20 +1,24 @@
-import React from 'react'
+import React, { Suspense, lazy } from 'react'
 import ReactDOM from 'react-dom/client'
 import { Analytics } from '@vercel/analytics/react'
-import App from './App'
-import { PublicPages } from './PublicPages'
 import { resolvePublicPage } from './public-site-routes'
 import { FrontDoorBoundary } from './FrontDoorBoundary'
 import './styles.css'
 
-// Only the homepage mounts the authenticated Project World and WebGL canvas.
-// Editorial pages stay lightweight, public and independently navigable.
+// Split the bundle: reading public pages never initializes the expensive
+// authenticated workspace or WebGL. The home app retains all existing logic.
+const App = lazy(() => import('./App'))
+const PublicPages = lazy(async () => ({
+  default: (await import('./PublicPages')).PublicPages,
+}))
 const publicPage = resolvePublicPage(window.location.pathname)
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <FrontDoorBoundary>
-      {publicPage ? <PublicPages page={publicPage} /> : <App />}
+      <Suspense fallback={<div className="public-route-loading" role="status">OPENING PERCEPTION…</div>}>
+        {publicPage ? <PublicPages page={publicPage} /> : <App />}
+      </Suspense>
     </FrontDoorBoundary>
     <Analytics />
   </React.StrictMode>,
