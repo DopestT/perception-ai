@@ -116,3 +116,41 @@
   .vision-journey, .vision-final-cta button { transition: none; }
   .vision-journey:hover, .vision-final-cta button:hover { transform: none; }
 }
+
+
+/* Give the existing plasma entry point a clear, human-first identity without
+   changing its input, authorization, or result logic. */
+.hero-imagination-title {
+  margin: 0 0 12px;
+  max-width: 850px;
+  color: #fcf7ed;
+  font-size: clamp(37px, 5vw, 68px);
+  font-weight: 600;
+  line-height: 1.06;
+  letter-spacing: -.065em;
+  text-align: center;
+  text-shadow: 0 8px 42px rgba(0,0,0,.68);
+}
+.hero-imagination-title em {
+  color: #f4b995;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-weight: 400;
+  font-style: italic;
+}
+.hero-belief {
+  width: min(700px, calc(100vw - 46px));
+  margin: 0 auto 5px;
+  color: #f8d8c3;
+  font-size: clamp(11px, 1.15vw, 14px);
+  line-height: 1.55;
+  font-weight: 530;
+  text-align: center;
+  text-shadow: 0 2px 20px rgba(0,0,0,.76);
+}
+.portal-hero { min-height: max(100svh, 740px); }
+@media (max-width: 620px) {
+  .portal-hero { min-height: max(100svh, 790px); }
+  .hero-imagination-title { font-size: clamp(32px, 9vw, 47px); max-width: 96%; }
+  .hero-belief { max-width: 345px; }
+  .hero-content { margin-top: 46px; }
+}
