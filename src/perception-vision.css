@@ -210,14 +210,18 @@
 .companion-work-rail__dot { height: 7px; width: 7px; border-radius: 50%; background: #83c6b8; }
 .companion-work-rail__main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 590; }
 .companion-work-rail__status { font-size: 11px; color: #a9bcc1; line-height: 1.4; }
-.companion-work-rail > button {
-  flex: 0 0 auto; display: flex; align-items: center; justify-content: center; gap: 9px;
+.companion-work-rail__actions { flex: 0 0 auto; display: flex; gap: 9px; align-items: center; flex-wrap: wrap; max-width: 400px; }
+.companion-work-rail__actions button {
+  min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 9px;
   padding: 12px 15px; border: 1px solid rgba(164, 226, 218, .28); border-radius: 9px;
   color: #deeeea; background: rgba(91, 177, 169, .10);
-  font-size: 10px; font-weight: 790; letter-spacing: .11em;
+  font-size: 10px; font-weight: 790; letter-spacing: .10em;
 }
-.companion-work-rail > button:hover { background: rgba(91, 177, 169, .22); }
+.companion-work-rail__actions button:hover:not(:disabled) { background: rgba(91, 177, 169, .22); }
+.companion-work-rail__actions button:disabled { opacity: .55; }
+.companion-work-rail__checked, .companion-work-rail__error { width: 100%; color: #a7cac6; font-size: 11px; line-height: 1.4; }
+.companion-work-rail__error { color: #ffccbb; }
 @media (max-width: 620px) {
   .companion-work-rail { align-items: stretch; flex-direction: column; gap: 15px; padding: 17px; }
-  .companion-work-rail > button { align-self: flex-start; }
+  .companion-work-rail__actions { width: 100%; }
 }
