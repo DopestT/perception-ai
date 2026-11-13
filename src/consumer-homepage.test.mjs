@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest'
 const appSource = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8')
 const mainSource = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8')
 const plasmaSource = readFileSync(new URL('./PlasmaPortal.tsx', import.meta.url), 'utf8')
+const visionSource = readFileSync(new URL('./PerceptionVision.tsx', import.meta.url), 'utf8')
+const visionStyles = readFileSync(new URL('./perception-vision.css', import.meta.url), 'utf8')
 
 function section(source, start, end) {
   const from = source.indexOf(start)
@@ -76,4 +78,17 @@ describe('consumer homepage contract', () => {
     expect(appSource).toContain('const activeForecast')
     expect(appSource).not.toContain('{forecast ? (')
   })
+  it('makes the imagination-first story actionable without changing the original task flow', () => {
+    expect(appSource).toContain('Your imagination.')
+    expect(appSource).toContain('<PerceptionVision onStart=')
+    expect(visionSource).toContain('We don’t replace human imagination.')
+    for (const anchor of ['id="vision"', 'id="possibilities"', 'id="how-it-works"', 'id="vision-principles"']) {
+      expect(visionSource).toContain(anchor)
+    }
+    expect(visionSource).toContain('onStart(journey.prompt, journey.mode)')
+    expect(visionSource).toContain('An opinion is not a fact.')
+    expect(visionStyles).toContain('prefers-reduced-motion: reduce')
+    expect(visionStyles).toContain('@media (max-width: 620px)')
+  })
+
 })
