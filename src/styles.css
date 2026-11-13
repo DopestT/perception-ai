@@ -1133,3 +1133,28 @@ button:disabled { cursor: default; }
   .starter-actions { gap: 6px; }
   .starter-action { padding: 7px 10px; }
 }
+
+
+/* PERCEPTION live background resilience: animated WebGL is preferred, but
+   iPad Safari can suspend or deny GPU contexts. A brighter organic CSS current
+   remains visible without blocking forms or requiring video downloads. */
+.plasma-canvas--lost {
+  opacity: 0;
+  visibility: hidden;
+}
+.plasma-canvas--lost ~ .portal-fallback {
+  opacity: .85;
+  filter: blur(21px) brightness(1.17) saturate(1.32);
+  animation: fallback-current 11s ease-in-out infinite alternate;
+}
+.plasma-canvas--lost ~ .portal-reflection {
+  opacity: .66;
+}
+@keyframes fallback-current {
+  0%   { transform: translate(-50%, -50%) rotate(-4deg) scale(.96, .98); }
+  48%  { transform: translate(-50%, -50%) rotate(2deg) scale(1.065, .96); }
+  100% { transform: translate(-50%, -50%) rotate(-1deg) scale(.985, 1.08); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plasma-canvas--lost ~ .portal-fallback { animation: none; }
+}

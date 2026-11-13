@@ -58,7 +58,12 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
     `
 
     const fragmentSource = `
+      // Mobile fragment shaders need highp where supported, especially for time.
+      #ifdef GL_FRAGMENT_PRECISION_HIGH
+      precision highp float;
+      #else
       precision mediump float;
+      #endif
       uniform vec2 uResolution;
       uniform vec2 uPointer;
       uniform float uTime;
@@ -128,13 +133,13 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
         vec2 pointer = (uPointer - 0.5) * vec2(aspect, 1.0);
         float pointerInfluence = exp(-5.5 * distance(uv, pointer)) * 0.045;
 
-        float speed = 0.085 + uEnergy * 0.08 + uSubmit * 0.14;
+        float speed = 0.16 + uEnergy * 0.08 + uSubmit * 0.12;
         float t = uTime * speed;
         // Slowly advected eddies move along a coherent fluid current.
         // Keep turbulence gentle so the form feels buoyant rather than jittery.
         vec2 current = vec2(
-          0.021 * sin(uv.y * 3.1 + t * 0.68),
-          0.021 * cos(uv.x * 2.4 - t * 0.46)
+          0.052 * sin(uv.y * 3.1 + t * 0.88),
+          0.046 * cos(uv.x * 2.4 - t * 0.76)
         );
         vec2 warp = uv + current;
         float n1 = fbm(warp * 2.0 + vec2(t, -t * 0.55));
@@ -146,14 +151,17 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
         float xScale = 0.96 - uSubmit * 0.12;
         float yScale = 0.58 - uSubmit * 0.06;
         vec2 ellipseP = vec2(warp.x / xScale, warp.y / yScale);
-        float ringDist = abs(length(ellipseP) - 0.98);
+        float perimeter = atan(ellipseP.y, ellipseP.x);
+        float organicPulse = 0.021 * sin(perimeter * 3.0 + uTime * 0.74)
+          + 0.012 * sin(perimeter * 5.0 - uTime * 0.42);
+        float ringDist = abs(length(ellipseP) - (0.98 + organicPulse));
 
         float turbulence = fbm(warp * 8.0 + t * 0.5);
         float ringWidth = 0.075 + turbulence * 0.055 + uFocus * 0.012;
         float ring = 1.0 - smoothstep(ringWidth, ringWidth + 0.055, ringDist);
 
         float side = smoothstep(-0.16, 0.24, uv.x + (n1 - 0.5) * 0.18);
-        float shimmer = 0.52 + 0.48 * sin((uv.x * 5.0 - uv.y * 3.0 + n2 * 4.0) + uTime * 0.35);
+        float shimmer = 0.52 + 0.48 * sin((uv.x * 5.0 - uv.y * 3.0 + n2 * 4.0) + uTime * 0.66);
         float localEnergy = clamp(0.42 + 0.5 * turbulence + 0.22 * shimmer + uEnergy * 0.3 + uFocus * 0.16 + uSubmit * 0.5, 0.0, 1.0);
         vec3 color = palette(localEnergy, side, uExperience);
 
@@ -245,9 +253,14 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
     window.addEventListener('pointermove', onPointer, { passive: true })
     document.addEventListener('visibilitychange', onVisibility)
 
+    const lowPowerDevice = window.matchMedia('(pointer: coarse)').matches
     const resize = () => {
       const rect = canvas.getBoundingClientRect()
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5)
+      // Cap fragment workload to keep iPad Safari interactive; CSS softly
+      // scales the plasma instead of issuing millions of excess GPU pixels.
+      const maxPixels = lowPowerDevice ? 880_000 : 1_500_000
+      const boundedScale = Math.sqrt(maxPixels / Math.max(1, rect.width * rect.height))
+      const dpr = Math.min(window.devicePixelRatio || 1, lowPowerDevice ? 1 : 1.25, boundedScale)
       const width = Math.max(1, Math.floor(rect.width * dpr))
       const height = Math.max(1, Math.floor(rect.height * dpr))
       if (canvas.width !== width || canvas.height !== height) {
@@ -258,10 +271,17 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
     }
 
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const precision = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT)
+    const supportsHighPrecision = Boolean(precision && precision.precision > 0)
+    const animationOrigin = performance.now()
+    let lastRendered = 0
 
     const render = (now: number) => {
       raf = requestAnimationFrame(render)
       if (!visible || gl.isContextLost()) return
+      // Cap frame rate on touch devices without blocking input or scrolling.
+      if (now - lastRendered < (lowPowerDevice ? 32 : 16)) return
+      lastRendered = now
       resize()
       const dt = Math.min((now - start) / 1000, 0.032)
       start = now
@@ -281,7 +301,8 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
 
       gl.uniform2f(resolution, canvas.width, canvas.height)
       gl.uniform2f(pointerUniform, px, py)
-      gl.uniform1f(timeUniform, reducedMotion ? 0.0 : now / 1000)
+      const elapsedSeconds = (now - animationOrigin) / 1000
+      gl.uniform1f(timeUniform, reducedMotion ? 0.0 : (supportsHighPrecision ? elapsedSeconds : elapsedSeconds % 32))
       gl.uniform1f(energyUniform, reducedMotion ? 0.06 : smoothEnergy)
       gl.uniform1f(focusUniform, reducedMotion ? 0.0 : smoothFocus)
       gl.uniform1f(submitUniform, reducedMotion ? 0.0 : smoothSubmit)
