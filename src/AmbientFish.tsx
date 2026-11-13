@@ -190,9 +190,8 @@ export function AmbientFish({ experienceMode }: { experienceMode: ExperienceMode
         Math.round(lerp(base[1], 242, 0.17)),
         Math.round(lerp(base[2], 242, 0.17)),
       ]
-      const direction = passage % 2 === 0 ? 1 : -1
       const size = Math.max(70, Math.min(128, width * 0.12))
-      const heading = (direction < 0 ? Math.PI : 0) + path.slope * (width / Math.max(height, 1)) * 0.6
+      const heading = Math.atan2(Math.sin(path.slope) * height, Math.cos(path.slope) * width)
       drawCreature(context, path.x * width, path.y * height, size,
         heading, now / 1000 * 10.5, [base, lighter], path.opacity)
     }
