@@ -101,7 +101,7 @@ export function ZCompanion({
         <div className="z-companion-identity">
           <span className="z-companion-emblem" aria-hidden="true"><ZFishMark /></span>
           <div>
-            <p>Z / YOUR TINY GUIDE</p>
+            <p>Z’help / YOUR TINY GUIDE</p>
             <h2 id="z-companion-heading">What can I help you find?</h2>
           </div>
         </div>
@@ -174,13 +174,13 @@ export function ZCompanion({
       ref={triggerRef}
       type="button"
       className="z-companion-trigger"
-      aria-label={open ? 'Close Z the fish helper' : 'Ask Z the fish helper'}
+      aria-label={open ? 'Close Z’help' : 'Open Z’help'}
       aria-expanded={open}
       aria-controls="z-companion-panel"
       onClick={() => onOpenChange(!open)}
     >
       <ZFishMark />
-      <span>Z · HELP</span>
+      <span>Z’help</span>
     </button>
   </aside>
 }
