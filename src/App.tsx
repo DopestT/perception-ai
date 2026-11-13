@@ -8,6 +8,7 @@ import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPort
 import { AmbientFish } from './AmbientFish'
 import { ZCompanion } from './ZCompanion'
 import { PerceptionVision } from './PerceptionVision'
+import { EvidenceRelationshipPanel } from './EvidenceRelationshipPanel'
 import { resolveForecastInput, resolveFrontDoorInput } from './lib/front-door-intake'
 import {
   attachKalshiMarketSignal,
@@ -1098,14 +1099,7 @@ function App() {
 
                 <details open={showEvidence} onToggle={(event) => setShowEvidence(event.currentTarget.open)}>
                   <summary>Evidence</summary>
-                  <div className="evidence-consumer-list">
-                    {ledgers?.epistemic.length ? ledgers.epistemic.slice(-6).reverse().map((entry) => (
-                      <article key={entry.id}>
-                        <span>{entry.state === 'observed' || entry.state === 'confirmed' ? 'Verified / observed' : 'Working inference'}</span>
-                        <strong>{entry.statement}</strong>
-                      </article>
-                    )) : <p>No evidence has been recorded yet.</p>}
-                  </div>
+                  <EvidenceRelationshipPanel world={world} ledgers={ledgers} />
                 </details>
 
                 <details>
