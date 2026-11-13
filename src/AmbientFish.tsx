@@ -136,6 +136,21 @@ export function AmbientFish({ experienceMode, onSelect }: {
     const showTarget = (x: number, y: number, size: number) => {
       const hitWidth = Math.max(68, size * 1.35)
       const hitHeight = Math.max(48, size * .82)
+
+      // The target may be above hero text, but must never intercept an input,
+      // starter button or link. Check rectangles, not only the fish center.
+      const canvasRect = canvas.getBoundingClientRect()
+      const left = canvasRect.left + x - hitWidth / 2
+      const top = canvasRect.top + y - hitHeight / 2
+      const occupied = Array.from(document.querySelectorAll<HTMLElement>(
+        '.hero-content input, .hero-content button, .hero-content a, .hero-content textarea',
+      )).some((control) => {
+        const rect = control.getBoundingClientRect()
+        return left < rect.right && left + hitWidth > rect.left
+          && top < rect.bottom && top + hitHeight > rect.top
+      })
+      if (occupied) { hideTarget(); return }
+
       target.style.width = `${hitWidth}px`
       target.style.height = `${hitHeight}px`
       target.style.transform = `translate3d(${x - hitWidth / 2}px, ${y - hitHeight / 2}px, 0)`
