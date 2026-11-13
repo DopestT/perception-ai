@@ -6,6 +6,7 @@ import { GrowthOperatorPanel } from './GrowthOperatorPanel'
 import { TokenEfficiencyPanel } from './TokenEfficiencyPanel'
 import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPortal'
 import { PerceptionVision } from './PerceptionVision'
+import './auth-refinement.css'
 import { resolveForecastInput, resolveFrontDoorInput } from './lib/front-door-intake'
 import {
   attachKalshiMarketSignal,
@@ -524,7 +525,7 @@ function App() {
     await processObjective(frontDoor.statement)
   }
 
-  const requestSignIn = async (event: FormEvent) => {
+  const requestSignIn = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const address = String(new FormData(event.currentTarget).get('email') ?? email).trim()
     if (!address || authBusy) return
@@ -1295,7 +1296,7 @@ function App() {
                       <div className="auth-field-heading">
                         <label className="auth-field-label" htmlFor="perception-auth-password">{authMode === 'signup' ? 'Create a password' : 'Password'}</label>
                         {authMode === 'signin' && (
-                          <button type="button" className="auth-inline-link" onClick={() => changeAuthMode('magic')}>Forgot password?</button>
+                          <button type="button" className="auth-inline-link" onClick={() => changeAuthMode('magic')}>Forgot password? Use email link</button>
                         )}
                       </div>
                       <div className="auth-password-field">
