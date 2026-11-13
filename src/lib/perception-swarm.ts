@@ -47,6 +47,19 @@ export const SWARM_ROSTER: readonly SwarmAgent[] = Object.freeze([
   { agentId: 'truth-verifier', role: 'truth-verification', canProposeChanges: false, canVerify: true, allowedPermissionLevels: ['P0'] },
 ])
 
+/**
+ * Named collaborator is intentionally not a dispatchable worker. Its identity
+ * and approved operational role must be verified before any task is assigned.
+ */
+export const SWARM_COLLABORATORS = Object.freeze([
+  {
+    name: 'Perseverance',
+    status: 'role_unmapped',
+    dispatchEnabled: false,
+    permissionLevels: [] as const,
+  },
+])
+
 const rosterById = new Map(SWARM_ROSTER.map((agent) => [agent.agentId, agent]))
 const isReviewer = (id: string) => rosterById.get(id)?.canVerify === true
 
@@ -153,8 +166,11 @@ export function planSwarm(
   for (const task of tasks) {
     if (task.permissionLevel !== 'P1') continue
     for (const file of task.allowedFiles) {
-      const previous = ownership.get(file)
-      if (previous && previous !== task.taskId) violations.push(`${task.taskId}: file_owner_conflict`)
+      const conflicting = [...ownership].find(([path, owner]) =>
+        owner !== task.taskId
+        && (path === file || path.startsWith(`${file}/`) || file.startsWith(`${path}/`))
+      )
+      if (conflicting) violations.push(`${task.taskId}: file_owner_conflict`)
       ownership.set(file, task.taskId)
     }
   }
@@ -220,6 +236,10 @@ export function reviewSwarmTask(
   if (!reviewer.approved || reviewer.artifactRef !== task.expectedArtifact
     || !reviewer.independentEvidenceRefs.length || reviewer.independentEvidenceRefs.some(ref => !ref?.trim())) {
     return reject('unverified_external_evidence')
+  }
+  // A worker forwarding its own reference is not independent observation.
+  if (reviewer.independentEvidenceRefs.every(ref => worker.evidenceRefs.includes(ref))) {
+    return reject('reviewer_evidence_not_independent')
   }
   if (!task.completionTests.every(test => reviewer.testsPassed.includes(test))) {
     return reject('reviewer_tests_missing')
