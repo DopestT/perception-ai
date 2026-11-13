@@ -947,6 +947,7 @@ function App() {
               </button>
             </div>
             <p className="track-line">SEE <span>•</span> HEAR <span>•</span> UNDERSTAND <span>•</span> BUILD</p>
+            <a className="hero-explore" href="#vision">EXPLORE THE VISION <span aria-hidden="true">↓</span></a>
             {notice && <p className="hero-notice" role="status"><Check size={14} /> {notice}</p>}
             {error && !authOpen && <p className="hero-error" role="alert">{error}</p>}
           </div>
