@@ -55,8 +55,12 @@ describe('consumer homepage contract', () => {
 
   it('shows only observed task state and never claims unattended execution', () => {
     expect(appSource).toContain('YOUR WORK IS PRESERVED')
-    expect(appSource).toContain('Verification still needed')
+    expect(appSource).toContain('Open your workspace to review evidence')
     expect(appSource).toContain('VIEW MY WORK')
+    expect(appSource).toContain('CHECK STATUS')
+    expect(appSource).toContain('const refreshSavedWork = useCallback')
+    expect(appSource).toContain('getProjectWorld(world.project.id)')
+    expect(appSource).not.toContain('world.verifications.some((verification) => verification.passed) ? \' Verified evidence recorded\'')
     expect(appSource).not.toContain('Automatically completed in background')
   })
 
