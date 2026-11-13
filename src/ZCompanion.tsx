@@ -10,6 +10,8 @@ type ZCompanionProps = {
   savedWorkStatus: string | null
   checkingWork: boolean
   isBusy: boolean
+  open: boolean
+  onOpenChange: (open: boolean) => void
   onStart: (mode: ExperienceMode, idea: string) => void
   onViewWork: () => void
   onCheckWork: () => void
@@ -42,9 +44,8 @@ function ZFishMark() {
  */
 export function ZCompanion({
   experienceMode, signedIn, hasSavedWork, savedWorkStatus, checkingWork, isBusy,
-  onStart, onViewWork, onCheckWork, onOpenAccount,
+  open, onOpenChange, onStart, onViewWork, onCheckWork, onOpenAccount,
 }: ZCompanionProps) {
-  const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState('')
   const triggerRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLElement>(null)
@@ -56,7 +57,7 @@ export function ZCompanion({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        setOpen(false)
+        onOpenChange(false)
       }
     }
     document.addEventListener('keydown', onKeyDown)
@@ -70,7 +71,7 @@ export function ZCompanion({
   const takeToFrontDoor = (mode: ExperienceMode, idea = '') => {
     if (isBusy) return
     onStart(mode, idea)
-    setOpen(false)
+    onOpenChange(false)
   }
 
   const submitIdea = (event: FormEvent<HTMLFormElement>) => {
@@ -104,7 +105,7 @@ export function ZCompanion({
             <h2 id="z-companion-heading">What can I help you find?</h2>
           </div>
         </div>
-        <button className="z-companion-close" type="button" aria-label="Close Z help" onClick={() => setOpen(false)}><X size={18} aria-hidden="true"/></button>
+        <button className="z-companion-close" type="button" aria-label="Close Z help" onClick={() => onOpenChange(false)}><X size={18} aria-hidden="true"/></button>
       </div>
       <p className="z-companion-intro">
         I'm here for quick directions. PERCEPTION handles your ideas and work; you decide when anything is submitted.
@@ -123,7 +124,7 @@ export function ZCompanion({
         </button>
         {signedIn && hasSavedWork ? (
           <>
-            <button type="button" onClick={() => { onViewWork(); setOpen(false) }} disabled={isBusy}>
+            <button type="button" onClick={() => { onViewWork(); onOpenChange(false) }} disabled={isBusy}>
               <CheckCircle2 size={18} aria-hidden="true"/>
               <span><strong>See my saved work</strong><small>Recorded status: {recordedStatus}</small></span>
               <ArrowRight size={17} aria-hidden="true"/>
@@ -137,7 +138,7 @@ export function ZCompanion({
         ) : (
           <button type="button" disabled={isBusy} onClick={() => {
             if (signedIn) takeToFrontDoor('perceive')
-            else { onOpenAccount(); setOpen(false) }
+            else { onOpenAccount(); onOpenChange(false) }
           }}>
             {signedIn ? <CircleHelp size={18} aria-hidden="true"/> : <LockKeyhole size={18} aria-hidden="true"/>}
             <span>
@@ -176,7 +177,7 @@ export function ZCompanion({
       aria-label={open ? 'Close Z the fish helper' : 'Ask Z the fish helper'}
       aria-expanded={open}
       aria-controls="z-companion-panel"
-      onClick={() => setOpen(value => !value)}
+      onClick={() => onOpenChange(!open)}
     >
       <ZFishMark />
       <span>Z · HELP</span>
