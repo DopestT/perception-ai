@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, Play, RefreshCw, Rocket, ScanSearch } from 'lucide-react'
+import { TrafficProductionPanel } from './TrafficProductionPanel'
 import {
   configureGrowthSite,
   getGrowthDashboard,
@@ -214,6 +215,7 @@ export function GrowthOperatorPanel({ projectId }: Props) {
       {!dashboard?.site && (
         <p className="growth-empty"><Play size={15} /> Connect the LMTYAI proof site, then run the first baseline scan.</p>
       )}
+      <TrafficProductionPanel projectId={projectId} dashboard={dashboard} />
       {note && <p className="hero-notice" role="status"><CheckCircle2 size={14} /> {note}</p>}
       {error && <p className="hero-error" role="alert">{error}</p>}
     </article>
