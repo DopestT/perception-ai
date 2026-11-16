@@ -47,7 +47,7 @@ type FetchResult = {
   status: number
 }
 
-const MAX_DOCUMENT_BYTES = 1_000_000
+const MAX_DOCUMENT_BYTES = 8_000_000
 const FETCH_TIMEOUT_MS = 10_000
 const MAX_REDIRECTS = 3
 
@@ -133,9 +133,29 @@ async function fetchApprovedSource(claim: StudyClaim): Promise<FetchResult> {
         throw new Error('Source document is too large')
       }
 
-      const buffer = await response.arrayBuffer()
-      if (buffer.byteLength > MAX_DOCUMENT_BYTES) throw new Error('Source document is too large')
-      const body = new TextDecoder('utf-8', { fatal: false }).decode(buffer)
+      // Bound actual bytes as they arrive, even when Content-Length is missing or incorrect.
+      const decoder = new TextDecoder('utf-8', { fatal: false })
+      const textChunks: string[] = []
+      let receivedBytes = 0
+      if (response.body) {
+        const reader = response.body.getReader()
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            receivedBytes += value.byteLength
+            if (receivedBytes > MAX_DOCUMENT_BYTES) {
+              await reader.cancel()
+              throw new Error('Source document is too large')
+            }
+            textChunks.push(decoder.decode(value, { stream: true }))
+          }
+        } finally {
+          reader.releaseLock()
+        }
+      }
+      textChunks.push(decoder.decode())
+      const body = textChunks.join('')
       return {
         unchanged: false,
         body,
