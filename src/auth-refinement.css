@@ -1,0 +1,208 @@
+/* Authentication refinements: scoped so existing system dialogs and
+   PERCEPTION project workspace styling remain unchanged. */
+.auth-card--welcoming {
+  width: min(100%, 500px);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid rgba(163, 226, 222, .23);
+  border-radius: 24px;
+  padding: clamp(24px, 4vw, 38px);
+  color: #fcf8f1;
+  background:
+    radial-gradient(ellipse at 0% 0%, rgba(21, 151, 189, .21), transparent 43%),
+    radial-gradient(ellipse at 100% 100%, rgba(213, 111, 68, .15), transparent 47%),
+    #0b1720;
+  box-shadow: 0 35px 120px rgba(0,0,0,.68), inset 0 1px rgba(255,255,255,.06);
+  scrollbar-color: rgba(166,209,211,.25) transparent;
+}
+.auth-card--welcoming:focus { outline: none; }
+.auth-card--welcoming .auth-brandline {
+  margin: 0 0 22px;
+  color: rgba(229, 235, 225, .84);
+  font-size: 9px;
+  letter-spacing: .23em;
+  font-weight: 780;
+}
+.auth-card--welcoming .auth-brandline span { margin: 0 7px; color: #d49d7c; }
+.auth-card--welcoming .auth-icon {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 16px;
+  border-color: rgba(145, 215, 212, .22);
+  color: #b9e1dc;
+  background: linear-gradient(140deg, rgba(73,159,170,.17), rgba(219,118,83,.11));
+}
+.auth-card--welcoming .section-kicker { color: #e3b295; font-size: 10px; }
+.auth-card--welcoming h2 {
+  max-width: 380px;
+  margin: 12px 0 12px;
+  color: #fffaf1;
+  font-size: clamp(29px, 4.4vw, 39px);
+  line-height: 1.12;
+  letter-spacing: -.055em;
+}
+.auth-card--welcoming > p#auth-intro {
+  margin-bottom: 26px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: rgba(232, 239, 234, .72);
+}
+.auth-card--welcoming .auth-provider {
+  min-height: 51px;
+  border-color: rgba(189, 217, 222, .18);
+  background: rgba(255,255,255,.055);
+}
+.auth-card--welcoming .auth-provider:focus-visible,
+.auth-card--welcoming button:focus-visible,
+.auth-card--welcoming input:focus-visible {
+  outline: 2px solid rgba(143, 226, 226, .92);
+  outline-offset: 2px;
+}
+.auth-card--welcoming .auth-divider { margin: 22px 0 17px; color: rgba(238,240,232,.6); }
+.auth-card--welcoming .auth-mode-switch {
+  padding: 5px;
+  margin-bottom: 20px;
+  border-color: rgba(183, 221, 220, .17);
+  background: rgba(0,0,0,.28);
+}
+.auth-card--welcoming .auth-mode-tab {
+  min-height: 39px;
+  color: rgba(237, 242, 236, .6);
+  font-size: 10px;
+}
+.auth-card--welcoming .auth-mode-tab--active {
+  color: #fffaf1;
+  background: rgba(124, 183, 183, .18);
+  box-shadow: inset 0 0 0 1px rgba(170, 230, 225, .23);
+}
+.auth-card--welcoming .auth-password-form { gap: 9px; }
+.auth-card--welcoming .auth-field-label {
+  display: block;
+  color: rgba(236, 241, 235, .84);
+  font-size: 12px;
+  font-weight: 680;
+  letter-spacing: .025em;
+}
+.auth-card--welcoming .auth-field-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+  margin-top: 7px;
+}
+.auth-card--welcoming .auth-inline-link {
+  padding: 3px 0;
+  border: 0;
+  color: #c6e3e0;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-align: right;
+}
+.auth-card--welcoming .auth-inline-link:hover { color: #fff; text-decoration: underline; }
+.auth-card--welcoming .auth-password-form input {
+  min-height: 50px;
+  height: 50px;
+  font-size: 16px; /* avoid Safari auto-zoom and improve iPad autofill */
+  color: #f5f8f4;
+  border-radius: 12px;
+  background: rgba(1, 7, 13, .40);
+  border: 1px solid rgba(173, 219, 221, .22);
+}
+.auth-card--welcoming .auth-password-form input::placeholder { color: rgba(225, 236, 232, .45); }
+.auth-card--welcoming .auth-password-form input:focus {
+  border-color: #8ed8d6;
+  box-shadow: 0 0 0 3px rgba(116, 208, 205, .13);
+}
+.auth-card--welcoming .auth-password-field { position: relative; }
+.auth-card--welcoming .auth-password-field input { padding-right: 60px; }
+.auth-card--welcoming .auth-password-field .auth-password-toggle {
+  position: absolute;
+  inset: 2px 3px 2px auto;
+  display: grid;
+  place-items: center;
+  width: 48px;
+  min-height: 0;
+  height: calc(100% - 4px);
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: rgba(232, 242, 236, .78);
+  letter-spacing: normal;
+}
+.auth-card--welcoming .auth-password-toggle:hover { background: rgba(147, 209, 205, .10); color: white; }
+.auth-card--welcoming .auth-password-form .auth-primary-submit {
+  min-height: 52px;
+  margin-top: 14px;
+  color: #09202b;
+  border: 1px solid rgba(177, 243, 238, .45);
+  border-radius: 12px;
+  background: linear-gradient(105deg, #8fe1dc, #d3e4ce 55%, #eeb28a);
+  box-shadow: 0 12px 34px rgba(40, 136, 155, .13);
+  font-size: 11px;
+  font-weight: 840;
+  letter-spacing: .10em;
+}
+.auth-card--welcoming .auth-password-form .auth-primary-submit:hover { filter: brightness(1.075); }
+.auth-card--welcoming .auth-magic-choice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  margin-top: 13px;
+  padding: 10px 14px;
+  border: 1px solid rgba(165, 217, 216, .25);
+  border-radius: 12px;
+  color: #d7ece7;
+  background: rgba(128, 192, 191, .08);
+  font-size: 12px;
+  font-weight: 650;
+}
+.auth-card--welcoming .auth-magic-choice:hover {
+  background: rgba(128, 192, 191, .17);
+  border-color: rgba(165, 217, 216, .4);
+}
+.auth-card--welcoming .auth-help-text {
+  color: #c0d0cf;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 10px 0 16px;
+}
+.auth-card--welcoming .auth-error {
+  display: block;
+  border: 1px solid rgba(240, 128, 99, .38);
+  border-radius: 10px;
+  background: rgba(163, 54, 34, .10);
+  padding: 12px 14px;
+  color: #ffd4c9;
+  line-height: 1.5;
+  font-size: 12px;
+}
+.auth-card--welcoming > small {
+  margin-top: 18px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: rgba(224, 234, 228, .5);
+}
+.auth-card--welcoming .auth-secondary {
+  min-height: 48px;
+  color: #d9f0e9;
+  border-color: rgba(160, 215, 209, .28);
+  border-radius: 11px;
+  background: rgba(160,215,209,.09);
+}
+.auth-card--welcoming .auth-close { color: rgba(243,243,235,.68); }
+@media (max-width: 640px), (max-height: 720px) {
+  .auth-backdrop { padding: 12px; align-items: flex-start; overflow-y: auto; }
+  .auth-card--welcoming { max-height: calc(100dvh - 24px); margin: auto; padding: 26px 20px; }
+  .auth-card--welcoming h2 { font-size: 31px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .auth-card--welcoming { animation: none; }
+}
