@@ -29,7 +29,7 @@ export function swimPath(progress: number, passage: number): MotionPoint {
 /** Deliberately irregular spacing so the fish is a discovery, not an animation loop. */
 export function encounterDelay(passage: number): number {
   const jitter = Math.sin((passage + 1) * 12.9898) * 43758.5453
-  return 20000 + 16000 * (jitter - Math.floor(jitter))
+  return 9500 + 9500 * (jitter - Math.floor(jitter))
 }
 
 export function encounterDuration(passage: number): number {
