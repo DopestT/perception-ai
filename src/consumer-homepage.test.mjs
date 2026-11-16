@@ -68,6 +68,21 @@ describe('consumer homepage contract', () => {
     expect(plasmaSource).toContain('webglcontextlost')
     expect(plasmaSource).toContain('webglcontextrestored')
     expect(plasmaSource).toContain('preventDefault()')
+    expect(plasmaSource).toContain('GL_FRAGMENT_PRECISION_HIGH')
+    expect(plasmaSource).toContain('animationOrigin')
+    expect(plasmaSource).toContain('supportsHighPrecision')
+    expect(plasmaSource).toContain('lowPowerDevice')
+    const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
+    expect(styles).toContain('.plasma-canvas--lost { opacity: 0; }')
+  })
+
+  it('makes the swimming fish and Z visible without overriding reduced-motion preferences', () => {
+    const fishSource = readFileSync(new URL('./AmbientFish.tsx', import.meta.url), 'utf8')
+    const zStyles = readFileSync(new URL('./z-companion.css', import.meta.url), 'utf8')
+    expect(fishSource).toContain('performance.now() + 1400')
+    expect(fishSource).toContain('prefers-reduced-motion: reduce')
+    expect(zStyles).toContain('z-gentle-swim 4.2s')
+    expect(zStyles).toContain('@media (prefers-reduced-motion: reduce)')
   })
 
   it('progressively reveals result depth instead of dumping system internals', () => {
