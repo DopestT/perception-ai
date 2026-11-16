@@ -47,7 +47,7 @@ describe('consumer homepage contract', () => {
 
   it('offers a rare motion-respecting fish without changing canvas interaction', () => {
     const fishSource = readFileSync(new URL('./AmbientFish.tsx', import.meta.url), 'utf8')
-    expect(appSource).toContain('<AmbientFish experienceMode={experienceMode} />')
+    expect(appSource).toContain('<AmbientFish experienceMode={experienceMode} onSelect={() => setZOpen(true)} />')
     expect(fishSource).toContain("prefers-reduced-motion: reduce")
     expect(fishSource).toContain('visibilitychange')
     expect(visionStyles).toContain('pointer-events: none;')

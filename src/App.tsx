@@ -6,7 +6,9 @@ import { GrowthOperatorPanel } from './GrowthOperatorPanel'
 import { TokenEfficiencyPanel } from './TokenEfficiencyPanel'
 import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPortal'
 import { AmbientFish } from './AmbientFish'
+import { ZCompanion } from './ZCompanion'
 import { PerceptionVision } from './PerceptionVision'
+import { EvidenceRelationshipPanel } from './EvidenceRelationshipPanel'
 import { resolveForecastInput, resolveFrontDoorInput } from './lib/front-door-intake'
 import {
   attachKalshiMarketSignal,
@@ -165,6 +167,7 @@ function App() {
   const [password, setPassword] = useState('')
   const [authMode, setAuthMode] = useState<AuthMode>('signin')
   const [authOpen, setAuthOpen] = useState(false)
+  const [zOpen, setZOpen] = useState(false)
   const [authSent, setAuthSent] = useState(false)
   const [busy, setBusy] = useState(false)
   const [resolvingForecast, setResolvingForecast] = useState(false)
@@ -916,7 +919,7 @@ function App() {
       <section className={`portal-hero portal-hero--${portalMode} portal-hero--experience-${experienceMode}`}>
         <div className="portal-stage">
           <PlasmaPortal mode={portalMode} experienceMode={experienceMode} energy={typingEnergy} />
-          <AmbientFish experienceMode={experienceMode} />
+          <AmbientFish experienceMode={experienceMode} onSelect={() => setZOpen(true)} />
           <div className="portal-fallback" aria-hidden="true" />
           <div className="portal-reflection" aria-hidden="true" />
 
@@ -1108,14 +1111,7 @@ function App() {
 
                 <details open={showEvidence} onToggle={(event) => setShowEvidence(event.currentTarget.open)}>
                   <summary>Evidence</summary>
-                  <div className="evidence-consumer-list">
-                    {ledgers?.epistemic.length ? ledgers.epistemic.slice(-6).reverse().map((entry) => (
-                      <article key={entry.id}>
-                        <span>{entry.state === 'observed' || entry.state === 'confirmed' ? 'Verified / observed' : 'Working inference'}</span>
-                        <strong>{entry.statement}</strong>
-                      </article>
-                    )) : <p>No evidence has been recorded yet.</p>}
-                  </div>
+                  <EvidenceRelationshipPanel world={world} ledgers={ledgers} />
                 </details>
 
                 <details>
@@ -1337,6 +1333,28 @@ function App() {
           </section>
         </div>
       )}
+
+      <ZCompanion
+        experienceMode={experienceMode}
+        signedIn={Boolean(session)}
+        hasSavedWork={Boolean(session && world && latestObjective)}
+        savedWorkStatus={latestObjective?.status ?? null}
+        checkingWork={refreshingSavedWork}
+        isBusy={busy}
+        open={zOpen}
+        onOpenChange={setZOpen}
+        onStart={(mode, idea) => {
+          if (busy) return
+          selectExperienceMode(mode)
+          setInput(idea)
+          setPortalMode('focused')
+          window.scrollTo({ top: 0, behavior: 'smooth' })
+          window.setTimeout(() => document.querySelector<HTMLInputElement>('.hero-input-shell input')?.focus(), 260)
+        }}
+        onViewWork={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+        onCheckWork={() => { void refreshSavedWork() }}
+        onOpenAccount={() => { setPortalMode('auth'); setAuthOpen(true) }}
+      />
 
       <PerceptionVision onStart={(prompt, mode) => {
         selectExperienceMode(mode)
