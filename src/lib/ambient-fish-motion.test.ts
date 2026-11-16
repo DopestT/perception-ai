@@ -28,8 +28,8 @@ describe('ambient fish: organic but bounded movement', () => {
     const waits = Array.from({ length: 15 }, (_, i) => encounterDelay(i))
     expect(new Set(waits.map(Math.floor)).size).toBeGreaterThan(10)
     for (let i = 0; i < 20; i++) {
-      expect(encounterDelay(i)).toBeGreaterThanOrEqual(20000)
-      expect(encounterDelay(i)).toBeLessThan(36000)
+      expect(encounterDelay(i)).toBeGreaterThanOrEqual(9500)
+      expect(encounterDelay(i)).toBeLessThan(19000)
       expect(encounterDuration(i)).toBeGreaterThanOrEqual(9500)
       expect(encounterDuration(i)).toBeLessThanOrEqual(11800)
     }
