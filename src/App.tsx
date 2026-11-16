@@ -8,6 +8,7 @@ import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPort
 import { AmbientFish } from './AmbientFish'
 import { ZCompanion } from './ZCompanion'
 import { PerceptionVision } from './PerceptionVision'
+import { EvidenceRelationshipPanel } from './EvidenceRelationshipPanel'
 import './auth-refinement.css'
 import { resolveForecastInput, resolveFrontDoorInput } from './lib/front-door-intake'
 import { validateEmailPassword } from './lib/auth-input'
