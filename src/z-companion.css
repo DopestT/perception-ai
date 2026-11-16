@@ -39,10 +39,10 @@
   transform: translateY(-2px);
 }
 .z-companion-trigger > span { font-size: 10px; font-weight: 850; letter-spacing: .12em; white-space: nowrap; }
-.z-companion-trigger .z-fish-mark { animation: z-gentle-swim 6s ease-in-out infinite; transform-origin: 64% 50%; }
+.z-companion-trigger .z-fish-mark { animation: z-gentle-swim 4.2s ease-in-out infinite; transform-origin: 64% 50%; }
 @keyframes z-gentle-swim {
-  0%,100% { transform: translateY(0) rotate(-1deg) }
-  50% { transform: translateY(-2px) rotate(1deg) }
+  0%,100% { transform: translateY(1px) rotate(-2deg) }
+  50% { transform: translateY(-5px) rotate(2deg) }
 }
 .z-companion button:focus-visible, .z-companion input:focus-visible {
   outline: 2px solid #bceae2;
