@@ -43,7 +43,7 @@ function drawCreature(
   ctx.translate(x, y)
   ctx.rotate(heading)
   ctx.scale(size / 110, size / 110)
-  ctx.globalAlpha = Math.min(0.7, Math.max(0, opacity * 0.64))
+  ctx.globalAlpha = Math.min(0.84, Math.max(0, opacity * 0.82))
   ctx.globalCompositeOperation = 'screen'
   const tail = Math.sin(tailPhase) * 9
   const bodyPulse = Math.sin(tailPhase - 0.9) * 1.7
@@ -170,7 +170,7 @@ export function AmbientFish({ experienceMode, onSelect }: {
     let lastFrame = 0
     let passage = 0
     let encounterStart = 0
-    let nextEncounter = performance.now() + 4200
+    let nextEncounter = performance.now() + 1400
     const resize = () => {
       const bounds = canvas.getBoundingClientRect()
       width = Math.max(1, bounds.width)
