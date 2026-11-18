@@ -165,7 +165,7 @@ function App() {
   )
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [authMode, setAuthMode] = useState<AuthMode>('signin')
+  const [authMode, setAuthMode] = useState<AuthMode>('magic')
   const [authOpen, setAuthOpen] = useState(false)
   const [zOpen, setZOpen] = useState(false)
   const [authSent, setAuthSent] = useState(false)
@@ -541,8 +541,8 @@ function App() {
     if (!session) {
       savePendingObjective(frontDoor.statement, experienceMode, experienceMode === 'forecast' ? forecastDeadline : undefined)
       setError('')
-      setNotice('Sign in once to continue and keep your work across devices.')
-      setAuthMode('signup')
+      setNotice('Use your email to continue and keep your work across devices.')
+      setAuthMode('magic')
       setPortalMode('auth')
       setAuthOpen(true)
       return
@@ -912,7 +912,7 @@ function App() {
             <button className="icon-action" type="button" onClick={logout} aria-label="Sign out"><LogOut size={15} /></button>
           </div>
         ) : (
-          <button className="sign-in-link" type="button" onClick={() => { setPortalMode('auth'); setAuthOpen(true) }}>SIGN IN</button>
+          <button className="sign-in-link" type="button" onClick={() => { setAuthMode('magic'); setAuthSent(false); setError(''); setPassword(''); setPortalMode('auth'); setAuthOpen(true) }}>SIGN IN</button>
         )}
       </header>
 
