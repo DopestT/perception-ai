@@ -1329,7 +1329,7 @@ function App() {
             )}
 
             {error && <p className="auth-error" role="alert">{error}</p>}
-            <small>Email/password is active now. If you do not have a password yet, request a fresh email sign-in link.</small>
+            <small>Email link sign-in is ready. For password sign-in or account options, choose “Use password or another method.”</small>
           </section>
         </div>
       )}
@@ -1353,7 +1353,7 @@ function App() {
         }}
         onViewWork={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
         onCheckWork={() => { void refreshSavedWork() }}
-        onOpenAccount={() => { setPortalMode('auth'); setAuthOpen(true) }}
+        onOpenAccount={() => { setAuthMode('magic'); setAuthSent(false); setError(''); setPassword(''); setPortalMode('auth'); setAuthOpen(true) }}
       />
 
       <PerceptionVision onStart={(prompt, mode) => {
