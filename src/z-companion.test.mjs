@@ -59,7 +59,7 @@ describe('PERCEPTION Z fish helper — opt-in and evidence-honest', () => {
     expect(app).toContain("document.querySelector<HTMLInputElement>('.hero-input-shell input')")
     expect(app).toContain('onCheckWork={() => { void refreshSavedWork() }}')
     expect(app).toContain("document.getElementById('project-world')?.scrollIntoView")
-    expect(app).toContain("onOpenAccount={() => { setPortalMode('auth'); setAuthOpen(true) }}")
+    expect(app).toContain("onOpenAccount={() => { setAuthMode('magic'); setAuthSent(false); setError(''); setPassword(''); setPortalMode('auth'); setAuthOpen(true) }}")
   })
 
   it("never auto-submits a user's text", () => {
