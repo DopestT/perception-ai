@@ -338,6 +338,25 @@ button:disabled { cursor: default; }
   backdrop-filter: blur(12px);
 }
 .hero-error { color: #ffc5b5; border-color: rgba(255,91,42,.18); }
+/* Compact truth cue: the current observable state, never speculative progress. */
+.hero-workflow-cue {
+  max-width: min(100%, 650px);
+  margin: 9px 0 0;
+  color: rgba(218, 239, 238, .85);
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: .11em;
+  line-height: 1.5;
+  text-align: center;
+  text-shadow: 0 1px 16px rgba(0, 0, 0, .7);
+}
+.hero-workflow-cue[data-workflow-state="recorded"] { color: #c5e6dc; }
+.hero-workflow-cue[data-workflow-state="attention"] { color: #ffcdba; }
+.portal-hero--workflow-requesting .portal-reflection { opacity: .62; }
+.portal-hero--workflow-checking .portal-reflection { opacity: .55; }
+.portal-hero--workflow-recorded .portal-reflection { opacity: .57; }
+.portal-hero--workflow-attention .portal-reflection { opacity: .38; }
+
 .portal-hero--charging .hero-input-shell { transform: scale(.987); border-color: rgba(var(--mode-accent-rgb), .3); }
 .portal-hero--absorbing .hero-input-shell { transform: scale(.972); box-shadow: 0 0 80px rgba(var(--mode-b-rgb), .08), -20px 0 70px rgba(var(--mode-a-rgb), .05); }
 .portal-hero--transitioning .hero-content { animation: transition-bloom .7s cubic-bezier(.2,.8,.2,1); }
