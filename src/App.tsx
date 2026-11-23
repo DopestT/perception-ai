@@ -1,15 +1,17 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Clock3, Compass, Eye, EyeOff, KeyRound, LogOut, Mail, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
+import { Check, Clock3, Compass, KeyRound, LogOut, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
 import type { Session } from '@supabase/supabase-js'
 import { ForecastPanel } from './ForecastPanel'
 import { GrowthOperatorPanel } from './GrowthOperatorPanel'
 import { TokenEfficiencyPanel } from './TokenEfficiencyPanel'
 import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPortal'
+import { AmbientFish } from './AmbientFish'
+import { ZCompanion } from './ZCompanion'
 import { PerceptionVision } from './PerceptionVision'
-import './auth-refinement.css'
-import { resolveForecastInput, resolveFrontDoorInput } from './lib/front-door-intake'
-import { validateEmailPassword } from './lib/auth-input'
+import { EvidenceRelationshipPanel } from './EvidenceRelationshipPanel'
 import { makeFreeStarter, type FreeStarter } from './lib/free-starter'
+import './free-starter.css'
+import { resolveForecastInput, resolveFrontDoorInput } from './lib/front-door-intake'
 import {
   attachKalshiMarketSignal,
   backendConfigured,
@@ -160,19 +162,25 @@ function App() {
   const [forecast, setForecast] = useState<Forecast | null>(null)
   const [calibration, setCalibration] = useState<ForecastCalibration | null>(null)
   const [forecastDeadline, setForecastDeadline] = useState(defaultForecastDeadline)
-  const [input, setInput] = useState('')
+  // Generic starter prompts from public editorial pages never auto-submit.
+  const [input, setInput] = useState(() =>
+    new URLSearchParams(window.location.search).get('idea')?.slice(0, 500) ?? ''
+  )
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [authMode, setAuthMode] = useState<AuthMode>('signin')
+  const [authMode, setAuthMode] = useState<AuthMode>('magic')
   const [authOpen, setAuthOpen] = useState(false)
+  const [zOpen, setZOpen] = useState(false)
   const [authSent, setAuthSent] = useState(false)
-  const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
   const [resolvingForecast, setResolvingForecast] = useState(false)
   const [attachingMarket, setAttachingMarket] = useState(false)
   const [runningIntelligence, setRunningIntelligence] = useState(false)
   const [runningOperatorTest, setRunningOperatorTest] = useState(false)
   const [continuingRoute, setContinuingRoute] = useState(false)
+  const [refreshingSavedWork, setRefreshingSavedWork] = useState(false)
+  const [savedWorkCheckedAt, setSavedWorkCheckedAt] = useState<string | null>(null)
+  const [savedWorkError, setSavedWorkError] = useState('')
   const [operatorPlan, setOperatorPlan] = useState<GitHubOperatorSelfTestPlan | null>(null)
   const [registeringPasskey, setRegisteringPasskey] = useState(false)
   const [marketNote, setMarketNote] = useState('')
@@ -182,7 +190,10 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
-  const [experienceMode, setExperienceMode] = useState<ExperienceMode>('perceive')
+  const [experienceMode, setExperienceMode] = useState<ExperienceMode>(() => {
+    const mode = new URLSearchParams(window.location.search).get('mode')
+    return mode === 'discover' || mode === 'search' || mode === 'forecast' ? mode : 'perceive'
+  })
   const [portalMode, setPortalMode] = useState<PlasmaMode>('idle')
   const [typingEnergy, setTypingEnergy] = useState(0)
   const [resultDepth, setResultDepth] = useState<'summary' | 'depth'>('summary')
@@ -195,8 +206,6 @@ function App() {
   const intentShadowGeneration = useRef(0)
   const intentShadowRef = useRef<{ text: string; mode: ExperienceMode; preview: IntentShadowPreview } | null>(null)
   const authHydratedUserRef = useRef<string | null>(null)
-  const authDialogRef = useRef<HTMLElement | null>(null)
-  const authBusyRef = useRef(false)
 
   const completedStages = useMemo(() => inferCompletedStages(world, runtimeResult), [world, runtimeResult])
   const activeExperience =
@@ -217,6 +226,27 @@ function App() {
     setLedgers(latest ? await getProjectLedgers(latest.project.id) : null)
     setOperatorPlan(pendingApproval)
   }, [])
+
+  const refreshSavedWork = useCallback(async () => {
+    if (!session || !world || refreshingSavedWork || busy) return
+    setRefreshingSavedWork(true)
+    setSavedWorkError('')
+    try {
+      // Read-only refresh through existing authenticated Project World RPCs.
+      // This does not dispatch a worker, grant permission, or imply completion.
+      const [updatedWorld, updatedLedgers] = await Promise.all([
+        getProjectWorld(world.project.id),
+        getProjectLedgers(world.project.id),
+      ])
+      setWorld(updatedWorld)
+      setLedgers(updatedLedgers)
+      setSavedWorkCheckedAt(new Date().toISOString())
+    } catch (cause) {
+      setSavedWorkError(cause instanceof Error ? cause.message : 'Could not refresh saved work.')
+    } finally {
+      setRefreshingSavedWork(false)
+    }
+  }, [session, world, refreshingSavedWork, busy])
 
   const loadForecastState = useCallback(async () => {
     try {
@@ -512,8 +542,7 @@ function App() {
     }
 
     if (!session) {
-      // Genuine local starter: no signup, model charge, Project World creation,
-      // or claim of completed AI work.
+      // Honest and free local first step: no auth, provider tokens or Project World writes.
       clearPendingObjective()
       setError('')
       setFreeStarter(makeFreeStarter(frontDoor.statement, experienceMode, experienceMode === 'forecast' ? forecastDeadline : undefined))
@@ -530,11 +559,10 @@ function App() {
     await processObjective(frontDoor.statement)
   }
 
-  const requestSignIn = async (event: FormEvent<HTMLFormElement>) => {
+  const requestSignIn = async (event: FormEvent) => {
     event.preventDefault()
-    const address = String(new FormData(event.currentTarget).get('email') ?? email).trim()
+    const address = email.trim()
     if (!address || authBusy) return
-    setEmail(address)
     setAuthBusy(true)
     setError('')
     try {
@@ -602,9 +630,8 @@ function App() {
       setError('Enter your email address.')
       return
     }
-    const passwordError = validateEmailPassword(submittedPassword, authMode === 'signup' ? 'signup' : 'signin')
-    if (passwordError) {
-      setError(passwordError)
+    if (submittedPassword.length < 8) {
+      setError('Enter your password to continue.')
       return
     }
 
@@ -849,60 +876,9 @@ function App() {
   const closeAuth = () => {
     setAuthOpen(false)
     setAuthSent(false)
-    setShowPassword(false)
     setPassword('')
-    setError('')
     setPortalMode(input ? 'focused' : 'idle')
   }
-
-  const changeAuthMode = (nextMode: AuthMode) => {
-    setAuthMode(nextMode)
-    setAuthSent(false)
-    setShowPassword(false)
-    setPassword('')
-    setError('')
-  }
-
-  useEffect(() => { authBusyRef.current = authBusy }, [authBusy])
-
-  // Keep keyboard focus inside the sign-in dialog and return it to the
-  // original trigger after closing. Do not scroll the page behind the dialog.
-  useEffect(() => {
-    if (!authOpen) return
-    const dialog = authDialogRef.current
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    dialog?.focus({ preventScroll: true })
-
-    const onAuthKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !authBusyRef.current) {
-        event.preventDefault()
-        closeAuth()
-      }
-      if (event.key !== 'Tab' || !dialog) return
-      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
-      )).filter((node) => node.getClientRects().length > 0)
-      if (!focusable.length) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-
-    document.addEventListener('keydown', onAuthKeyDown)
-    return () => {
-      document.body.style.overflow = previousOverflow
-      document.removeEventListener('keydown', onAuthKeyDown)
-      previousFocus?.focus({ preventScroll: true })
-    }
-  }, [authOpen])
 
   const selectExperienceMode = (nextMode: ExperienceMode) => {
     if (busy || nextMode === experienceMode) return
@@ -925,6 +901,12 @@ function App() {
           <span className="wordmark-mark">P</span>
           <span>PERCEPTION</span>
         </button>
+        <nav className="home-public-nav" aria-label="Explore PERCEPTION">
+          <a href="/possibilities">EXPLORE</a>
+          <a href="/how-it-works">HOW IT WORKS</a>
+          <a href="/about">ABOUT</a>
+          <a href="/test-lab">TEST LAB</a>
+        </nav>
         {session ? (
           <div className="account-actions">
             <button className="quiet-action" type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>MY WORK</button>
@@ -936,13 +918,14 @@ function App() {
             <button className="icon-action" type="button" onClick={logout} aria-label="Sign out"><LogOut size={15} /></button>
           </div>
         ) : (
-          <button className="sign-in-link" type="button" onClick={() => { setPortalMode('auth'); setAuthOpen(true) }}>SIGN IN</button>
+          <button className="sign-in-link" type="button" onClick={() => { setAuthMode('magic'); setAuthSent(false); setError(''); setPassword(''); setPortalMode('auth'); setAuthOpen(true) }}>SIGN IN</button>
         )}
       </header>
 
       <section className={`portal-hero portal-hero--${portalMode} portal-hero--experience-${experienceMode}`}>
         <div className="portal-stage">
           <PlasmaPortal mode={portalMode} experienceMode={experienceMode} energy={typingEnergy} />
+          <AmbientFish experienceMode={experienceMode} onSelect={() => setZOpen(true)} />
           <div className="portal-fallback" aria-hidden="true" />
           <div className="portal-reflection" aria-hidden="true" />
 
@@ -1031,6 +1014,31 @@ function App() {
           </div>
         </div>
       </section>
+
+      {session && latestObjective && world && (
+        <aside className="companion-work-rail" aria-label="Your saved Perception work">
+          <div className="companion-work-rail__main">
+            <span className="companion-work-rail__eyebrow"><span aria-hidden="true" className="companion-work-rail__dot" /> YOUR WORK IS PRESERVED</span>
+            <strong>{latestObjective.statement}</strong>
+            <span className="companion-work-rail__status">
+              Current status: {(latestObjective.status || 'unknown').replace(/_/g, ' ')} ·
+              Open your workspace to review evidence before treating work as complete.
+            </span>
+          </div>
+          <div className="companion-work-rail__actions">
+            <button type="button" onClick={refreshSavedWork} disabled={refreshingSavedWork || busy} aria-busy={refreshingSavedWork}>
+              {refreshingSavedWork ? 'CHECKING…' : 'CHECK STATUS'} <Clock3 size={15} aria-hidden="true" />
+            </button>
+            <button type="button" onClick={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+              VIEW MY WORK
+            </button>
+            {savedWorkCheckedAt && (
+              <small className="companion-work-rail__checked">Checked {new Date(savedWorkCheckedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</small>
+            )}
+            {savedWorkError && <small role="alert" className="companion-work-rail__error">{savedWorkError}</small>}
+          </div>
+        </aside>
+      )}
 
       {world && (
         <section className="world-section result-section" id="project-world">
@@ -1123,14 +1131,7 @@ function App() {
 
                 <details open={showEvidence} onToggle={(event) => setShowEvidence(event.currentTarget.open)}>
                   <summary>Evidence</summary>
-                  <div className="evidence-consumer-list">
-                    {ledgers?.epistemic.length ? ledgers.epistemic.slice(-6).reverse().map((entry) => (
-                      <article key={entry.id}>
-                        <span>{entry.state === 'observed' || entry.state === 'confirmed' ? 'Verified / observed' : 'Working inference'}</span>
-                        <strong>{entry.statement}</strong>
-                      </article>
-                    )) : <p>No evidence has been recorded yet.</p>}
-                  </div>
+                  <EvidenceRelationshipPanel world={world} ledgers={ledgers} />
                 </details>
 
                 <details>
@@ -1250,21 +1251,17 @@ function App() {
       )}
 
       {authOpen && (
-        <div className="auth-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !authBusy) closeAuth() }}>
-          <section ref={authDialogRef} tabIndex={-1} className="auth-card auth-card--modern auth-card--welcoming" role="dialog" aria-modal="true" aria-labelledby="auth-title" aria-describedby="auth-intro">
+        <div className="auth-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeAuth() }}>
+          <section className="auth-card auth-card--modern" role="dialog" aria-modal="true" aria-labelledby="auth-title">
             <button className="auth-close" type="button" onClick={closeAuth} aria-label="Close sign in"><X size={18} /></button>
             <div className="auth-icon"><KeyRound size={18} /></div>
-            <p className="auth-brandline">PERCEPTION <span>·</span> YOUR SPACE TO CREATE</p>
 
             {!authSent ? (
               <>
-                <p className="section-kicker">{authMode === 'signup' ? 'START SOMETHING WONDERFUL' : authMode === 'magic' ? 'NO PASSWORD NEEDED' : 'WELCOME BACK'}</p>
-                <h2 id="auth-title">{authMode === 'signup' ? 'Give your ideas a home.' : authMode === 'magic' ? 'Your next step is in your inbox.' : 'Pick up where you left off.'}</h2>
-                <p id="auth-intro">{authMode === 'signup' ? 'Save your work, return to ideas, and explore new possibilities across your devices.' : authMode === 'magic' ? 'Enter the email linked to your account. We’ll send a one-time link to sign you in.' : 'Continue your ideas and saved projects with the method you used before.'}</p>
-                <button className="auth-free-choice" type="button" onClick={() => {
-                  closeAuth()
-                  window.setTimeout(() => document.querySelector<HTMLInputElement>('.hero-input-shell input')?.focus(), 0)
-                }}>TRY FREE WITHOUT AN ACCOUNT</button>
+                <p className="section-kicker">{authMode === 'signup' ? 'SAVE YOUR PERCEPTION' : 'YOUR PERCEPTION ACCOUNT'}</p>
+                <h2 id="auth-title">{authMode === 'signup' ? 'Keep your work across devices.' : 'Continue your Project World.'}</h2>
+                <p>{authMode === 'signup' ? 'Create an account to keep your Project World available across sessions and devices.' : 'Use the sign-in method attached to your Perception account.'}</p>
+                <button className="auth-free-choice" type="button" onClick={() => { closeAuth(); window.setTimeout(() => document.querySelector<HTMLInputElement>('.hero-input-shell input')?.focus(), 0) }}>TRY FREE WITHOUT AN ACCOUNT</button>
 
                 {authMode !== 'magic' ? (
                   <>
@@ -1296,88 +1293,89 @@ function App() {
                         <div className="auth-divider">OR CONTINUE WITH EMAIL</div>
                       </>
                     )}
-                    <div className="auth-mode-switch" role="group" aria-label="Choose email sign-in or account creation">
-                      <button type="button" aria-pressed={authMode === 'signin'} className={authMode === 'signin' ? 'auth-mode-tab auth-mode-tab--active' : 'auth-mode-tab'} onClick={() => changeAuthMode('signin')}>SIGN IN</button>
-                      <button type="button" aria-pressed={authMode === 'signup'} className={authMode === 'signup' ? 'auth-mode-tab auth-mode-tab--active' : 'auth-mode-tab'} onClick={() => changeAuthMode('signup')}>CREATE ACCOUNT</button>
+                    <div className="auth-mode-switch" role="tablist" aria-label="Email authentication mode">
+                      <button type="button" className={authMode === 'signin' ? 'auth-mode-tab auth-mode-tab--active' : 'auth-mode-tab'} onClick={() => setAuthMode('signin')}>SIGN IN</button>
+                      <button type="button" className={authMode === 'signup' ? 'auth-mode-tab auth-mode-tab--active' : 'auth-mode-tab'} onClick={() => setAuthMode('signup')}>CREATE ACCOUNT</button>
                     </div>
                     <form onSubmit={handlePasswordAuth} className="auth-password-form">
-                      <label className="auth-field-label" htmlFor="perception-auth-email">Email address</label>
                       <input
-                        id="perception-auth-email"
                         type="email"
                         name="email"
                         value={email}
                         onChange={(event) => setEmail(event.target.value)}
-                        placeholder="you@example.com"
+                        placeholder="Email address"
                         autoComplete="email"
-                        autoCapitalize="none"
-                        spellCheck={false}
-                        inputMode="email"
                         required
                       />
-                      <div className="auth-field-heading">
-                        <label className="auth-field-label" htmlFor="perception-auth-password">{authMode === 'signup' ? 'Create a password' : 'Password'}</label>
-                        {authMode === 'signin' && (
-                          <button type="button" className="auth-inline-link" onClick={() => changeAuthMode('magic')}>Forgot password? Use email link</button>
-                        )}
-                      </div>
-                      <div className="auth-password-field">
-                        <input
-                          id="perception-auth-password"
-                          type={showPassword ? 'text' : 'password'}
-                          name="password"
-                          value={password}
-                          onChange={(event) => setPassword(event.target.value)}
-                          placeholder={authMode === 'signup' ? 'At least 8 characters' : 'Enter your password'}
-                          autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
-                          minLength={authMode === 'signup' ? 8 : undefined}
-                          required
-                        />
-                        <button type="button" className="auth-password-toggle" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword((visible) => !visible)}>
-                          {showPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
-                        </button>
-                      </div>
-                      <button className="auth-primary-submit" type="submit" disabled={authBusy}>
-                        {authBusy ? 'WORKING…' : authMode === 'signup' ? 'CREATE MY ACCOUNT' : 'CONTINUE TO MY WORK'}
+                      <input
+                        type="password"
+                        name="password"
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                        placeholder={authMode === 'signup' ? 'Create a password' : 'Password'}
+                        autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
+                        minLength={8}
+                        required
+                      />
+                      <button type="submit" disabled={authBusy}>
+                        {authBusy ? 'WORKING…' : authMode === 'signup' ? 'CREATE ACCOUNT' : 'SIGN IN'}
                       </button>
                     </form>
-                    <button className="auth-magic-choice" type="button" onClick={() => changeAuthMode('magic')}>
-                      <Mail size={17} aria-hidden="true" />
-                      <span>Use a one-time email link instead</span>
+                    <button className="auth-text-action" type="button" onClick={() => { setAuthMode('magic'); setAuthSent(false); setPassword('') }}>
+                      Email me a sign-in link instead
                     </button>
                   </>
                 ) : (
                   <>
                     <form onSubmit={requestSignIn} className="auth-password-form">
-                      <label className="auth-field-label" htmlFor="perception-magic-email">Your email address</label>
-                      <input id="perception-magic-email" name="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" autoComplete="email" autoCapitalize="none" spellCheck={false} inputMode="email" required />
-                      <button className="auth-primary-submit" type="submit" disabled={authBusy}>{authBusy ? 'SENDING…' : 'EMAIL ME A SIGN-IN LINK'}</button>
+                      <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email address" autoComplete="email" required autoFocus />
+                      <button type="submit" disabled={authBusy || !email.trim()}>{authBusy ? 'SENDING…' : 'SEND SIGN-IN LINK'}</button>
                     </form>
-                    <button className="auth-text-action" type="button" onClick={() => changeAuthMode('signin')}>Back to all sign-in options</button>
+                    <button className="auth-text-action" type="button" onClick={() => setAuthMode('signin')}>Use password or another method</button>
                   </>
                 )}
               </>
             ) : (
               <>
-                <p className="section-kicker">ONE MORE STEP</p>
-                <h2 id="auth-title">Check your inbox.</h2>
-                <p id="auth-intro">
-                  We sent an account email to <strong>{email}</strong>.
+                <p className="section-kicker">CHECK YOUR EMAIL</p>
+                <h2 id="auth-title">{authMode === 'signup' ? 'Confirm your account.' : 'Your Project World is waiting.'}</h2>
+                <p>
+                  We sent a secure message to <strong>{email}</strong>.
                   {authMode === 'signup'
-                    ? ' Open the confirmation email, then return to sign in.'
-                    : ' Open the newest sign-in link to return to your work.'}
+                    ? ' Confirm it once, then you can sign in with your password and add a passkey.'
+                    : ' Open the newest sign-in link and you will return here automatically.'}
                 </p>
-                <p className="auth-help-text">Don’t see it? Check spam or junk, and make sure the address is correct.</p>
-                <button className="auth-secondary" type="button" onClick={() => { setAuthSent(false); changeAuthMode('magic') }}>TRY ANOTHER EMAIL</button>
-                <button className="auth-text-action" type="button" onClick={() => changeAuthMode('signin')}>Back to sign in</button>
+                <button className="auth-secondary" type="button" onClick={() => setAuthSent(false)}>BACK TO SIGN IN</button>
               </>
             )}
 
-            {error && <p id="auth-feedback" className="auth-error" role="alert">{error}</p>}
-            <small>Use the sign-in method linked to your account. A one-time email link also works without a password.</small>
+            {error && <p className="auth-error" role="alert">{error}</p>}
+            <small>Email link sign-in is ready. For password sign-in or account options, choose “Use password or another method.”</small>
           </section>
         </div>
       )}
+
+      <ZCompanion
+        experienceMode={experienceMode}
+        signedIn={Boolean(session)}
+        hasSavedWork={Boolean(session && world && latestObjective)}
+        savedWorkStatus={latestObjective?.status ?? null}
+        checkingWork={refreshingSavedWork}
+        isBusy={busy}
+        open={zOpen}
+        onOpenChange={setZOpen}
+        onStart={(mode, idea) => {
+          if (busy) return
+          selectExperienceMode(mode)
+          setInput(idea)
+          setPortalMode('focused')
+          window.scrollTo({ top: 0, behavior: 'smooth' })
+          window.setTimeout(() => document.querySelector<HTMLInputElement>('.hero-input-shell input')?.focus(), 260)
+        }}
+        onViewWork={() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+        onCheckWork={() => { void refreshSavedWork() }}
+        onOpenAccount={() => { setAuthMode('magic'); setAuthSent(false); setError(''); setPassword(''); setPortalMode('auth'); setAuthOpen(true) }}
+      />
 
       <PerceptionVision onStart={(prompt, mode) => {
         selectExperienceMode(mode)
@@ -1389,6 +1387,16 @@ function App() {
 
       <footer className="home-footer">
         <span>PERCEPTION</span>
+        <nav className="home-site-map" aria-label="PERCEPTION site pages">
+          <a href="/about">ABOUT</a>
+          <a href="/possibilities">POSSIBILITIES</a>
+          <a href="/how-it-works">HOW IT WORKS</a>
+          <a href="/your-work">YOUR WORK</a>
+          <a href="/trust">TRUST</a>
+          <a href="/agents">AGENTS</a>
+          <a href="/test-lab">TEST LAB</a>
+          <a href="/faq">FAQ</a>
+        </nav>
         <p>Workers produce evidence. Perception owns truth. Verified effects update Project World.</p>
       </footer>
     </main>
