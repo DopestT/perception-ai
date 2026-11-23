@@ -1008,7 +1008,7 @@ function App() {
                       ? 'RESPONSE RECORDED · REVIEW THE EVIDENCE BELOW'
                       : 'ACTION NEEDS ATTENTION · REVIEW THE ERROR'}
               </p>
-            )
+            )}
             <a className="hero-explore" href="#vision">EXPLORE THE VISION <span aria-hidden="true">↓</span></a>
             {notice && <p className="hero-notice" role="status"><Check size={14} /> {notice}</p>}
             {error && !authOpen && <p className="hero-error" role="alert">{error}</p>}
