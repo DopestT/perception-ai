@@ -1,0 +1,45 @@
+name: Perception Hourly QA
+
+# No paid model calls, browser accounts, live writes or deployments.
+# The scheduled job runs on main only after this workflow is approved and merged.
+on:
+  schedule:
+    - cron: '19 * * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/perception-hourly-qa.yml'
+      - 'scripts/perception-http-preview-check.mjs'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perception-hourly-qa-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  continuous-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Run Perception unit and regression tests
+        run: npm test
+      - name: Compile TypeScript and build Vite app
+        run: npm run build
+      - name: Test built assets over local HTTP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./node_modules/.bin/vite preview --host 127.0.0.1 --port 4173 --strictPort > /tmp/perception-preview.log 2>&1 &
+          preview_pid=$!
+          trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
+          node scripts/perception-http-preview-check.mjs
