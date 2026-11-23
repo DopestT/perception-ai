@@ -64,6 +64,24 @@ describe('consumer homepage contract', () => {
     expect(appSource).not.toContain('Automatically completed in background')
   })
 
+  it('connects cinematic motion only to observable state and never invents a stage', () => {
+    const workflow = readFileSync(new URL('./lib/workflow-visual.ts', import.meta.url), 'utf8')
+    const styles = readFileSync(new URL('./styles.css', import.meta.url), 'utf8')
+    expect(appSource).toContain('deriveWorkflowVisualState({')
+    expect(appSource).toContain('responseProjectId: runtimeResult?.ok ? runtimeResult.project_id ?? null : null')
+    expect(appSource).toContain('currentProjectId: world?.project.id ?? null')
+    expect(appSource).toContain('activity={workflowVisualState}')
+    expect(appSource).toContain('NO RESULT CONFIRMED YET')
+    expect(appSource).toContain('NO NEW WORK DISPATCHED')
+    expect(appSource).toContain('REVIEW THE EVIDENCE BELOW')
+    expect(workflow).not.toContain('verified: true')
+    expect(plasmaSource).toContain('uniform float uActivity;')
+    expect(plasmaSource).toContain('animationOrigin')
+    expect(plasmaSource).not.toContain('elapsedSeconds % 32')
+    expect(plasmaSource).toContain('reducedMotion ? 0.0')
+    expect(styles).toContain('.hero-workflow-cue')
+  })
+
   it('recovers the animated background when WebGL is interrupted', () => {
     expect(plasmaSource).toContain('webglcontextlost')
     expect(plasmaSource).toContain('webglcontextrestored')
