@@ -1050,6 +1050,9 @@ function App() {
               )}
               <button type="button" onClick={() => { setResultDepth('depth'); setShowEvidence(true) }}>SHOW ME THE EVIDENCE</button>
             </div>
+            {runtimeResult?.ok && (
+              <p className="bookmark-hint">Worth coming back to? Bookmark Perception for next time.</p>
+            )}
           </div>
 
           {resultDepth === 'depth' && (
