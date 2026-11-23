@@ -1067,6 +1067,12 @@ button:disabled { cursor: default; }
   backdrop-filter: blur(14px);
 }
 .starter-action:hover { border-color: rgba(111,220,255,.42); color: #fff; }
+.bookmark-hint {
+  margin: 18px 0 0;
+  color: rgba(245, 249, 255, .56);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .result-section { padding-top: 64px; }
 .result-intro {
   max-width: 940px;
