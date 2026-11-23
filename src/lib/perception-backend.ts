@@ -184,7 +184,7 @@ export type ProjectWorld = {
     known_unknowns?: string[]
     urgency?: 'low' | 'normal' | 'high' | 'critical'
     meaning?: Record<string, unknown>
-    meaning_source?: 'openai' | 'deterministic_fallback' | null
+    meaning_source?: 'openai' | 'local' | 'openai_compatible' | 'deterministic_fallback' | null
     meaning_confidence?: number | null
     created_at: string
   }>

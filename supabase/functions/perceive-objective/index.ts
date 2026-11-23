@@ -87,7 +87,9 @@ function storedObjectiveMeaning(row: ResumeObjectiveRow): ResolvedObjectiveMeani
     confidence: typeof row.meaning_confidence === 'number' && Number.isFinite(row.meaning_confidence)
       ? Math.max(0, Math.min(1, row.meaning_confidence))
       : fallback.confidence,
-    source: row.meaning_source === 'openai' ? 'openai' : 'deterministic_fallback',
+    source: ['openai', 'local', 'openai_compatible'].includes(row.meaning_source || '')
+      ? row.meaning_source as 'openai' | 'local' | 'openai_compatible'
+      : 'deterministic_fallback',
     provider: null,
     model: null,
     routing_attempts: [],

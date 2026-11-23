@@ -37,7 +37,7 @@ export type ResolvedObjectiveMeaning = {
   known_unknowns: string[]
   inferred_claims: MeaningClaim[]
   confidence: number
-  source: 'openai' | 'deterministic_fallback'
+  source: ModelProvider | 'deterministic_fallback'
   provider: ModelProvider | null
   model: string | null
   routing_attempts: ResolverAttempt[]
@@ -110,6 +110,77 @@ function clamp(value: unknown, fallback: number): number {
     : fallback
 }
 
+const UNKNOWN_CURRENT_REALITY = 'Only the direct objective statement is currently known.'
+
+function uniqueExplicit(values: string[], limit: number): string[] {
+  const result: string[] = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    const trimmed = value.trim().replace(/\s+/g, ' ')
+    const key = trimmed.toLowerCase()
+    if (trimmed && !seen.has(key)) {
+      seen.add(key)
+      result.push(trimmed)
+      if (result.length === limit) break
+    }
+  }
+  return result
+}
+
+/**
+ * Exact user-language guardrails, not model-derived inferences.
+ * Keep these even when a provider drops or rewrites the instruction.
+ * This is deliberately conservative: unmatched requests stay in the original objective.
+ */
+export function explicitObjectiveBoundaries(statement: string) {
+  const text = statement.replace(/\s+/g, ' ').trim()
+  const constraints: string[] = []
+  const knownUnknowns: string[] = []
+  const deliverables: string[] = []
+
+  // Capture full prohibition clauses, including coordinated restrictions.
+  for (const match of text.matchAll(/\b(?:do not|don't|must not|never|without|not using)\b[^.!?;]*/gi)) {
+    constraints.push(match[0].replace(/[,\s]+$/, ''))
+  }
+
+  // Preserve user-stated budgets, quantities, and deadlines verbatim.
+  for (const match of text.matchAll(/\$[\d,]+(?:\.\d+)?(?:\s*\/\s*[a-z]+)?/gi)) constraints.push(match[0])
+  for (const match of text.matchAll(/\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)[-\s]+(?:day|days|week|weeks|month|months|page|pages|minute|minutes|quiz|quizzes|lesson|lessons|location|locations)\b/gi)) {
+    constraints.push(match[0])
+  }
+  for (const match of text.matchAll(/\b(?:by|before|until)\s+(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|today|tonight|tomorrow|\d{4}-\d{2}-\d{2})\b/gi)) {
+    constraints.push(match[0])
+  }
+
+  // Explicitly missing evidence cannot be promoted into a known current fact.
+  for (const match of text.matchAll(/\b(?:I|we)\s+(?:have not|haven't|do not|don't)\s+(?:provided|chosen|selected|tested|verified|confirmed|decided|specified|said|supplied|shared|determined|set|measured|run|collected|checked)\b[^.!?;]*/gi)) {
+    knownUnknowns.push(match[0])
+  }
+  for (const match of text.matchAll(/\b(?:need|give me|prepare|draft|create|make|write|build)\s+(?:an?\s+|the\s+)?(?:rollback|recovery|migration|launch|marketing|business|project)\s+plan\b/gi)) {
+    deliverables.push(match[0])
+  }
+  return {
+    constraints: uniqueExplicit(constraints, 12),
+    knownUnknowns: uniqueExplicit(knownUnknowns, 12),
+    deliverables: uniqueExplicit(deliverables, 12),
+  }
+}
+
+// Provider summaries are proposals, not observations. Use only direct user
+// statements for a current-state description, otherwise keep it unknown.
+function groundedCurrentReality(statement: string): string {
+  const sentence = statement.split(/[.!?]/).map((part) => part.trim())
+    .find((part) => /\b(?:my|our|the)\s+.{1,80}\s+(?:is|are|was|were)\s+(?:broken|offline|down|failing|not working)\b/i.test(part))
+  return sentence || UNKNOWN_CURRENT_REALITY
+}
+
+function explicitlyStatedUrgency(statement: string): ObjectiveUrgency | null {
+  if (/\b(emergency|critical|immediately|right now)\b/i.test(statement)) return 'critical'
+  if (/\b(urgent|asap|today|tonight)\b/i.test(statement)) return 'high'
+  if (/\b(whenever|no rush|eventually)\b/i.test(statement)) return 'low'
+  return null
+}
+
 function normalizeMeaning(
   raw: Record<string, unknown>,
   statement: string,
@@ -117,9 +188,10 @@ function normalizeMeaning(
   attempts: ResolverAttempt[],
   usage?: ResolverUsage,
 ): ResolvedObjectiveMeaning {
-  const urgency = ['low', 'normal', 'high', 'critical'].includes(String(raw.urgency))
+  const urgency = explicitlyStatedUrgency(statement) ?? (['low', 'normal', 'high', 'critical'].includes(String(raw.urgency))
     ? raw.urgency as ObjectiveUrgency
-    : 'normal'
+    : 'normal')
+  const direct = explicitObjectiveBoundaries(statement)
 
   const claims = Array.isArray(raw.inferred_claims)
     ? raw.inferred_claims
@@ -135,22 +207,16 @@ function normalizeMeaning(
     : []
 
   return {
-    desired_reality:
-      typeof raw.desired_reality === 'string' && raw.desired_reality.trim()
-        ? raw.desired_reality.trim().slice(0, 4000)
-        : statement,
-    current_reality:
-      typeof raw.current_reality === 'string' && raw.current_reality.trim()
-        ? raw.current_reality.trim().slice(0, 4000)
-        : 'Only the direct objective statement is currently known.',
-    constraints: compactStrings(raw.constraints, 12),
+    desired_reality: statement,
+    current_reality: groundedCurrentReality(statement),
+    constraints: uniqueExplicit([...direct.constraints, ...compactStrings(raw.constraints, 12)], 12),
     success_criteria: compactStrings(raw.success_criteria, 12),
-    deliverables: compactStrings(raw.deliverables, 12),
+    deliverables: uniqueExplicit([...direct.deliverables, ...compactStrings(raw.deliverables, 12)], 12),
     urgency,
-    known_unknowns: compactStrings(raw.known_unknowns, 12),
+    known_unknowns: uniqueExplicit([...direct.knownUnknowns, ...compactStrings(raw.known_unknowns, 12)], 12),
     inferred_claims: claims,
     confidence: clamp(raw.confidence, 0.65),
-    source: 'openai',
+    source: target.provider,
     provider: target.provider,
     model: target.model,
     routing_attempts: attempts,
@@ -175,17 +241,18 @@ export function deterministicMeaning(
   return {
     desired_reality: statement,
     current_reality: 'Only the direct objective statement is currently known.',
-    constraints: [],
+    constraints: explicitObjectiveBoundaries(statement).constraints,
     success_criteria: [
       'Preserve the user\'s stated objective without silently inventing requirements.',
       'Complete at least one bounded action and verify its effect before Project World advances.',
     ],
-    deliverables: ['Verified first-action brief'],
+    deliverables: uniqueExplicit([...explicitObjectiveBoundaries(statement).deliverables, 'Verified first-action brief'], 12),
     urgency,
-    known_unknowns: [
+    known_unknowns: uniqueExplicit([
+      ...explicitObjectiveBoundaries(statement).knownUnknowns,
       'The implementation state relevant to this objective has not yet been independently observed.',
       'Completion criteria beyond the direct statement have not yet been confirmed.',
-    ],
+    ], 12),
     inferred_claims: [],
     confidence: 0.55,
     source: 'deterministic_fallback',

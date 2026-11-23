@@ -302,7 +302,12 @@ function App() {
       setPortalMode('transitioning')
       await delay(620)
       setPortalMode('idle')
-      setNotice('Perception verified the first bounded action and updated Project World.')
+      const hasVerificationEvidence = nextWorld.verifications?.some(
+        (verification) => verification.passed && Array.isArray(verification.evidence) && verification.evidence.length > 0,
+      ) ?? false
+      setNotice(hasVerificationEvidence
+        ? 'Perception verified the first bounded action and updated Project World.'
+        : 'The action returned a result, but verification evidence is missing. Review it before relying on it.')
       window.setTimeout(() => document.getElementById('project-world')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
     } catch (cause) {
       setPortalMode('focused')
