@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { damp } from './lib/ambient-fish-motion'
+import type { WorkflowVisualState } from './lib/workflow-visual'
 
 export type PlasmaMode = 'idle' | 'hover' | 'focused' | 'typing' | 'charging' | 'absorbing' | 'auth' | 'transitioning'
 export type ExperienceMode = 'discover' | 'perceive' | 'search' | 'forecast'
+
+const activityValues: Record<WorkflowVisualState, number> = {
+  idle: 0,
+  requesting: 1,
+  checking: 2,
+  recorded: 3,
+  attention: 4,
+}
 
 const experienceValues: Record<ExperienceMode, number> = {
   discover: 0,
@@ -11,17 +20,19 @@ const experienceValues: Record<ExperienceMode, number> = {
   forecast: 3,
 }
 
-export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: PlasmaMode; experienceMode: ExperienceMode; energy?: number }) {
+export function PlasmaPortal({ mode, experienceMode, energy = 0, activity = 'idle' }: { mode: PlasmaMode; experienceMode: ExperienceMode; energy?: number; activity?: WorkflowVisualState }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const modeRef = useRef(mode)
   const experienceRef = useRef(experienceMode)
   const energyRef = useRef(energy)
+  const activityRef = useRef(activity)
   const [contextVersion, setContextVersion] = useState(0)
   const [contextLost, setContextLost] = useState(false)
 
   useEffect(() => { modeRef.current = mode }, [mode])
   useEffect(() => { experienceRef.current = experienceMode }, [experienceMode])
   useEffect(() => { energyRef.current = energy }, [energy])
+  useEffect(() => { activityRef.current = activity }, [activity])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -58,7 +69,11 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
     `
 
     const fragmentSource = `
+      #ifdef GL_FRAGMENT_PRECISION_HIGH
+      precision highp float;
+      #else
       precision mediump float;
+      #endif
       uniform vec2 uResolution;
       uniform vec2 uPointer;
       uniform float uTime;
@@ -67,6 +82,7 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
       uniform float uSubmit;
       uniform float uAuth;
       uniform float uExperience;
+      uniform float uActivity;
 
       float hash(vec2 p) {
         p = fract(p * vec2(123.34, 456.21));
@@ -128,7 +144,18 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
         vec2 pointer = (uPointer - 0.5) * vec2(aspect, 1.0);
         float pointerInfluence = exp(-5.5 * distance(uv, pointer)) * 0.045;
 
-        float speed = 0.085 + uEnergy * 0.08 + uSubmit * 0.14;
+        // The activity values are supplied from observable client/backend state,
+        // never from elapsed animation time or guessed hidden worker progress.
+        float requesting = 1.0 - smoothstep(0.0, 0.65, abs(uActivity - 1.0));
+        float checking = 1.0 - smoothstep(0.0, 0.65, abs(uActivity - 2.0));
+        float recorded = 1.0 - smoothstep(0.0, 0.65, abs(uActivity - 3.0));
+        float attention = 1.0 - smoothstep(0.0, 0.65, abs(uActivity - 4.0));
+        float activityPulse = 0.5 + 0.5 * sin(uTime * 1.35);
+        float activityGlow = requesting * (0.085 + 0.075 * activityPulse)
+          + checking * (0.06 + 0.045 * activityPulse)
+          + recorded * 0.075 + attention * 0.045;
+        float speed = 0.085 + uEnergy * 0.08 + uSubmit * 0.14
+          + requesting * 0.055 + checking * 0.025;
         float t = uTime * speed;
         // Slowly advected eddies move along a coherent fluid current.
         // Keep turbulence gentle so the form feels buoyant rather than jittery.
@@ -149,23 +176,24 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
         float ringDist = abs(length(ellipseP) - 0.98);
 
         float turbulence = fbm(warp * 8.0 + t * 0.5);
-        float ringWidth = 0.075 + turbulence * 0.055 + uFocus * 0.012;
+        float ringWidth = 0.075 + turbulence * 0.055 + uFocus * 0.012 + activityGlow * 0.045;
         float ring = 1.0 - smoothstep(ringWidth, ringWidth + 0.055, ringDist);
 
         float side = smoothstep(-0.16, 0.24, uv.x + (n1 - 0.5) * 0.18);
         float shimmer = 0.52 + 0.48 * sin((uv.x * 5.0 - uv.y * 3.0 + n2 * 4.0) + uTime * 0.35);
         float localEnergy = clamp(0.42 + 0.5 * turbulence + 0.22 * shimmer + uEnergy * 0.3 + uFocus * 0.16 + uSubmit * 0.5, 0.0, 1.0);
         vec3 color = palette(localEnergy, side, uExperience);
+        color = mix(color, vec3(1.0, 0.44, 0.24), attention * 0.13);
 
         float halo = exp(-4.8 * abs(length(vec2(uv.x / 1.02, uv.y / 0.64)) - 1.0));
-        halo *= 0.18 + uFocus * 0.12 + uEnergy * 0.11;
+        halo *= 0.18 + uFocus * 0.12 + uEnergy * 0.11 + activityGlow * 0.28;
 
         float floor = exp(-26.0 * abs(uv.y + 0.43)) * exp(-1.9 * abs(uv.x));
         floor *= 0.22 + 0.12 * sin(uv.x * 18.0 + uTime * 0.45 + n1 * 3.0);
 
         float centerVoid = 1.0 - smoothstep(0.2, 0.76, length(vec2(uv.x / 0.9, uv.y / 0.48)));
         float authDim = mix(1.0, 0.58, uAuth);
-        float alpha = (ring * (0.48 + localEnergy * 0.42) + halo + floor) * authDim;
+        float alpha = (ring * (0.48 + localEnergy * 0.42 + activityGlow * 0.22) + halo + floor) * authDim;
         alpha *= 1.0 - centerVoid * 0.24;
 
         gl_FragColor = vec4(color * (0.52 + localEnergy * 0.45), clamp(alpha, 0.0, 0.82));
@@ -224,6 +252,7 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
     const submitUniform = gl.getUniformLocation(program, 'uSubmit')
     const authUniform = gl.getUniformLocation(program, 'uAuth')
     const experienceUniform = gl.getUniformLocation(program, 'uExperience')
+    const activityUniform = gl.getUniformLocation(program, 'uActivity')
 
     let start = performance.now()
     let px = 0.5
@@ -235,6 +264,7 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
     let smoothSubmit = 0
     let smoothAuth = 0
     let smoothExperience = experienceValues[experienceRef.current]
+    let smoothActivity = activityValues[activityRef.current]
     let visible = document.visibilityState === 'visible'
 
     const onPointer = (event: PointerEvent) => {
@@ -258,6 +288,7 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
     }
 
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const animationOrigin = performance.now()
 
     const render = (now: number) => {
       raf = requestAnimationFrame(render)
@@ -273,20 +304,25 @@ export function PlasmaPortal({ mode, experienceMode, energy = 0 }: { mode: Plasm
       const targetSubmit = currentMode === 'charging' ? 0.58 : currentMode === 'absorbing' || currentMode === 'transitioning' ? 1 : 0
       const targetAuth = currentMode === 'auth' ? 1 : 0
       const targetExperience = experienceValues[experienceRef.current]
+      const targetActivity = activityValues[activityRef.current]
       smoothEnergy = damp(smoothEnergy, energyRef.current, dt, 5.0)
       smoothFocus = damp(smoothFocus, targetFocus, dt, 4.3)
       smoothSubmit = damp(smoothSubmit, targetSubmit, dt, 3.35)
       smoothAuth = damp(smoothAuth, targetAuth, dt, 3.7)
       smoothExperience = reducedMotion ? targetExperience : damp(smoothExperience, targetExperience, dt, 3.35)
+      smoothActivity = reducedMotion ? targetActivity : damp(smoothActivity, targetActivity, dt, 5.0)
 
       gl.uniform2f(resolution, canvas.width, canvas.height)
       gl.uniform2f(pointerUniform, px, py)
-      gl.uniform1f(timeUniform, reducedMotion ? 0.0 : now / 1000)
+      // Use elapsed-from-mount time instead of large device-uptime values.
+      // Do not modulo the shader clock: the plasma noise is not periodic.
+      gl.uniform1f(timeUniform, reducedMotion ? 0.0 : (now - animationOrigin) / 1000)
       gl.uniform1f(energyUniform, reducedMotion ? 0.06 : smoothEnergy)
       gl.uniform1f(focusUniform, reducedMotion ? 0.0 : smoothFocus)
       gl.uniform1f(submitUniform, reducedMotion ? 0.0 : smoothSubmit)
       gl.uniform1f(authUniform, smoothAuth)
       gl.uniform1f(experienceUniform, smoothExperience)
+      gl.uniform1f(activityUniform, smoothActivity)
       gl.drawArrays(gl.TRIANGLES, 0, 6)
     }
 
