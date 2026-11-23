@@ -9,6 +9,8 @@ import { AmbientFish } from './AmbientFish'
 import { ZCompanion } from './ZCompanion'
 import { PerceptionVision } from './PerceptionVision'
 import { EvidenceRelationshipPanel } from './EvidenceRelationshipPanel'
+import { makeFreeStarter, type FreeStarter } from './lib/free-starter'
+import './free-starter.css'
 import { resolveForecastInput, resolveFrontDoorInput } from './lib/front-door-intake'
 import {
   attachKalshiMarketSignal,
@@ -153,6 +155,7 @@ function inferCompletedStages(world: ProjectWorld | null, runtimeResult: Objecti
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
+  const [freeStarter, setFreeStarter] = useState<FreeStarter | null>(null)
   const [world, setWorld] = useState<ProjectWorld | null>(null)
   const [ledgers, setLedgers] = useState<ProjectLedgers | null>(null)
   const [runtimeResult, setRuntimeResult] = useState<ObjectiveRuntimeResult | null>(null)
@@ -539,15 +542,16 @@ function App() {
     }
 
     if (!session) {
-      savePendingObjective(frontDoor.statement, experienceMode, experienceMode === 'forecast' ? forecastDeadline : undefined)
+      // Honest and free local first step: no auth, provider tokens or Project World writes.
+      clearPendingObjective()
       setError('')
-      setNotice('Use your email to continue and keep your work across devices.')
-      setAuthMode('magic')
-      setPortalMode('auth')
-      setAuthOpen(true)
+      setFreeStarter(makeFreeStarter(frontDoor.statement, experienceMode, experienceMode === 'forecast' ? forecastDeadline : undefined))
+      setNotice('Free starter ready. No account or AI credits used.')
+      setPortalMode('focused')
       return
     }
 
+    setFreeStarter(null)
     if (experienceMode === 'forecast') {
       await processForecast(frontDoor.statement, forecastDeadline)
       return
@@ -822,6 +826,7 @@ function App() {
 
   const onInputChange = (value: string) => {
     setInput(value)
+    setFreeStarter(null)
     const activity = Math.min(1, 0.16 + value.length * 0.008)
     setTypingEnergy(activity)
     if (portalMode !== 'auth' && portalMode !== 'charging' && portalMode !== 'absorbing') setPortalMode('typing')
@@ -883,6 +888,7 @@ function App() {
     intentShadowGeneration.current += 1
     intentShadowRef.current = null
     setExperienceMode(nextMode)
+    setFreeStarter(null)
     setError('')
     setNotice('')
     if (portalMode !== 'auth') setPortalMode(input ? 'focused' : 'idle')
@@ -943,6 +949,7 @@ function App() {
               ))}
             </div>
             <p className="hero-mode-line">{activeExperience.invitation}</p>
+            <p className="free-entry-kicker">TRY A FIRST STEP FREE · NO ACCOUNT · NO AI CREDITS</p>
             <form className="hero-input-shell" onSubmit={submit}>
               <input
                 value={input}
@@ -958,6 +965,19 @@ function App() {
                 {experienceMode === 'discover' ? <Compass size={15} /> : experienceMode === 'search' ? <Search size={15} /> : experienceMode === 'forecast' ? <Clock3 size={15} /> : <Sparkles size={15} />}
               </button>
             </form>
+            {freeStarter && !session && (
+              <section className="free-starter-panel" aria-label="Your free starting point" aria-live="polite">
+                <p className="free-starter-eyebrow">FREE STARTER · NO SIGN-UP</p>
+                <h2>{freeStarter.heading}</h2>
+                <p className="free-starter-goal">{freeStarter.statement}</p>
+                {freeStarter.deadline && <p className="free-starter-date">Resolution date: {freeStarter.deadline}</p>}
+                <ol>
+                  {freeStarter.nextSteps.map((step, index) => <li key={index}>{step}</li>)}
+                </ol>
+                <p className="free-starter-limitation">{freeStarter.limitation} This temporary preview is not saved to an account.</p>
+                <button type="button" className="free-starter-account" onClick={() => { setAuthMode('signup'); setPortalMode('auth'); setAuthOpen(true) }}>CREATE AN ACCOUNT FOR SAVED WORK</button>
+              </section>
+            )}
             {experienceMode === 'forecast' && (
               <div className="forecast-deadline-field">
                 <label htmlFor="forecast-deadline">RESOLUTION DATE</label>
@@ -1241,6 +1261,7 @@ function App() {
                 <p className="section-kicker">{authMode === 'signup' ? 'SAVE YOUR PERCEPTION' : 'YOUR PERCEPTION ACCOUNT'}</p>
                 <h2 id="auth-title">{authMode === 'signup' ? 'Keep your work across devices.' : 'Continue your Project World.'}</h2>
                 <p>{authMode === 'signup' ? 'Create an account to keep your Project World available across sessions and devices.' : 'Use the sign-in method attached to your Perception account.'}</p>
+                <button className="auth-free-choice" type="button" onClick={() => { closeAuth(); window.setTimeout(() => document.querySelector<HTMLInputElement>('.hero-input-shell input')?.focus(), 0) }}>TRY FREE WITHOUT AN ACCOUNT</button>
 
                 {authMode !== 'magic' ? (
                   <>
