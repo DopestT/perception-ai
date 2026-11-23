@@ -5,6 +5,7 @@ import { ForecastPanel } from './ForecastPanel'
 import { GrowthOperatorPanel } from './GrowthOperatorPanel'
 import { TokenEfficiencyPanel } from './TokenEfficiencyPanel'
 import { PlasmaPortal, type ExperienceMode, type PlasmaMode } from './PlasmaPortal'
+import { deriveWorkflowVisualState } from './lib/workflow-visual'
 import { AmbientFish } from './AmbientFish'
 import { ZCompanion } from './ZCompanion'
 import { PerceptionVision } from './PerceptionVision'
@@ -213,6 +214,15 @@ function App() {
   const canContinueObjective = Boolean(latestObjective && !['realized', 'superseded'].includes(latestObjective.status || ''))
   const verifiedEvidenceCount = world?.verifications.reduce((sum, verification) => sum + (verification.evidence?.length ?? 0), 0) ?? 0
   const activeForecast = forecast && world && forecast.project_id === world.project.id ? forecast : null
+  // Only use request/read states and a response tied to the currently loaded World.
+  // The UI cannot infer hidden planning, worker execution, or verification stages.
+  const workflowVisualState = deriveWorkflowVisualState({
+    busy,
+    checking: refreshingSavedWork,
+    hasError: Boolean(error || savedWorkError),
+    responseProjectId: runtimeResult?.ok ? runtimeResult.project_id ?? null : null,
+    currentProjectId: world?.project.id ?? null,
+  })
 
   const loadLatestWorld = useCallback(async () => {
     const [latest, pendingApproval] = await Promise.all([
@@ -916,9 +926,9 @@ function App() {
         )}
       </header>
 
-      <section className={`portal-hero portal-hero--${portalMode} portal-hero--experience-${experienceMode}`}>
+      <section className={`portal-hero portal-hero--${portalMode} portal-hero--experience-${experienceMode} portal-hero--workflow-${workflowVisualState}`}>
         <div className="portal-stage">
-          <PlasmaPortal mode={portalMode} experienceMode={experienceMode} energy={typingEnergy} />
+          <PlasmaPortal mode={portalMode} experienceMode={experienceMode} energy={typingEnergy} activity={workflowVisualState} />
           <AmbientFish experienceMode={experienceMode} onSelect={() => setZOpen(true)} />
           <div className="portal-fallback" aria-hidden="true" />
           <div className="portal-reflection" aria-hidden="true" />
@@ -988,6 +998,17 @@ function App() {
               </button>
             </div>
             <p className="track-line">SEE <span>•</span> HEAR <span>•</span> UNDERSTAND <span>•</span> BUILD</p>
+            {workflowVisualState !== 'idle' && (
+              <p className="hero-workflow-cue" role="status" data-workflow-state={workflowVisualState}>
+                {workflowVisualState === 'requesting'
+                  ? 'REQUEST IN PROGRESS · NO RESULT CONFIRMED YET'
+                  : workflowVisualState === 'checking'
+                    ? 'READING SAVED STATUS · NO NEW WORK DISPATCHED'
+                    : workflowVisualState === 'recorded'
+                      ? 'RESPONSE RECORDED · REVIEW THE EVIDENCE BELOW'
+                      : 'ACTION NEEDS ATTENTION · REVIEW THE ERROR'}
+              </p>
+            )
             <a className="hero-explore" href="#vision">EXPLORE THE VISION <span aria-hidden="true">↓</span></a>
             {notice && <p className="hero-notice" role="status"><Check size={14} /> {notice}</p>}
             {error && !authOpen && <p className="hero-error" role="alert">{error}</p>}
