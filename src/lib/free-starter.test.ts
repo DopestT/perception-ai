@@ -26,4 +26,11 @@ describe('free-first Perception starter', () => {
     const longGoal = 'Understand my goals and priorities. '.repeat(200)
     expect(makeFreeStarter(longGoal, 'discover').statement).toBe(longGoal.trim())
   })
+  it('keeps a resolution date only on forecast results, not other free modes', () => {
+    for (const mode of ['discover', 'perceive', 'search'] as const) {
+      const result = makeFreeStarter('Try a useful first step', mode, '2027-01-01')
+      expect(result.mode).toBe(mode)
+      expect(result.deadline).toBeUndefined()
+    }
+  })
 })
