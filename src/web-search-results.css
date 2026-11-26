@@ -47,3 +47,39 @@
 @media (prefers-reduced-motion:reduce) {
   .web-results *,.web-results *::before,.web-results *::after { transition: none !important; animation: none !important; }
 }
+
+/* Review-only morph: same portal and input, compact when actual results arrive. */
+.portal-hero.portal-hero--experience-search {
+  transition: min-height 480ms cubic-bezier(.2,.8,.2,1);
+}
+.portal-hero.portal-hero--search-results {
+  min-height: clamp(240px, 34svh, 340px);
+}
+.portal-hero--search-results .portal-stage {
+  position: relative; min-height: clamp(240px, 34svh, 340px);
+  padding: 88px 0 20px; box-sizing: border-box;
+}
+.portal-hero--search-results .hero-content {
+  margin-top: 0;
+}
+.portal-hero--search-results .hero-content > :is(.hero-imagination-title,.hero-belief,.hero-support,.hero-kicker,.hero-mode-line,.starter-actions,.capability-launcher,.track-line,.hero-explore) {
+  display: none;
+}
+.portal-hero--search-results .experience-switcher { margin-bottom: 12px; }
+.portal-hero--search-results .hero-input-shell { margin-bottom: 4px; }
+.portal-hero--search-results .plasma-canvas { opacity: .72; }
+.portal-hero--search-results + #guest-web-results {
+  padding-top: clamp(12px, 2vw, 24px);
+  animation: search-results-arrival 420ms cubic-bezier(.2,.8,.2,1) both;
+}
+@keyframes search-results-arrival {
+  from { opacity: .65; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (max-width: 760px) {
+  .portal-hero--search-results .portal-stage { padding-top: 76px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .portal-hero.portal-hero--experience-search { transition: none; }
+  .portal-hero--search-results + #guest-web-results { animation: none; }
+}
