@@ -9,6 +9,9 @@ import { AmbientFish } from './AmbientFish'
 import { ZCompanion } from './ZCompanion'
 import { PerceptionVision } from './PerceptionVision'
 import { EvidenceRelationshipPanel } from './EvidenceRelationshipPanel'
+import { WebSearchResults } from './WebSearchResults'
+import { fetchGuestWebResults } from './lib/guest-web-search-client'
+import type { WebSearchPage } from './lib/web-search-contract'
 import { resolveForecastInput, resolveFrontDoorInput } from './lib/front-door-intake'
 import {
   attachKalshiMarketSignal,
@@ -156,6 +159,7 @@ function App() {
   const [world, setWorld] = useState<ProjectWorld | null>(null)
   const [ledgers, setLedgers] = useState<ProjectLedgers | null>(null)
   const [runtimeResult, setRuntimeResult] = useState<ObjectiveRuntimeResult | null>(null)
+  const [guestSearchResults, setGuestSearchResults] = useState<WebSearchPage | null>(null)
   const [forecast, setForecast] = useState<Forecast | null>(null)
   const [calibration, setCalibration] = useState<ForecastCalibration | null>(null)
   const [forecastDeadline, setForecastDeadline] = useState(defaultForecastDeadline)
@@ -189,7 +193,7 @@ function App() {
   const [error, setError] = useState('')
   const [experienceMode, setExperienceMode] = useState<ExperienceMode>(() => {
     const mode = new URLSearchParams(window.location.search).get('mode')
-    return mode === 'discover' || mode === 'search' || mode === 'forecast' ? mode : 'perceive'
+    return mode === 'discover' || mode === 'perceive' || mode === 'search' || mode === 'forecast' ? mode : 'search'
   })
   const [portalMode, setPortalMode] = useState<PlasmaMode>('idle')
   const [typingEnergy, setTypingEnergy] = useState(0)
@@ -516,6 +520,29 @@ function App() {
     intentShadowAbort.current?.abort()
     intentShadowAbort.current = null
     intentShadowGeneration.current += 1
+
+    // Ordinary web SEARCH is the default: no sign-in, Project World or AI job.
+    // A separate, explicitly clicked action may start deeper PERCEPTION work.
+    if (experienceMode === 'search') {
+      setBusy(true)
+      setError('')
+      setNotice('')
+      // Keep the previous clearly labeled results during a repeat search.
+      setPortalMode('charging')
+      try {
+        const nextResults = await fetchGuestWebResults(statement)
+        setGuestSearchResults(nextResults)
+        setPortalMode('idle')
+        // The existing portal compacts into the results toolbar; do not scroll past it.
+        window.scrollTo({ top: 0, behavior: 'instant' })
+      } catch (cause) {
+        setPortalMode('focused')
+        setError(cause instanceof Error ? cause.message : 'Web search is temporarily unavailable.')
+      } finally {
+        setBusy(false)
+      }
+      return
+    }
 
     const frontDoor = resolveFrontDoorInput(statement)
     if (frontDoor.kind === 'ignore') return
@@ -877,6 +904,7 @@ function App() {
 
   const selectExperienceMode = (nextMode: ExperienceMode) => {
     if (busy || nextMode === experienceMode) return
+    if (nextMode !== 'search') setGuestSearchResults(null)
     if (intentShadowTimer.current) window.clearTimeout(intentShadowTimer.current)
     intentShadowAbort.current?.abort()
     intentShadowAbort.current = null
@@ -891,7 +919,7 @@ function App() {
   return (
     <main className="perception-shell">
       <header className="home-header">
-        <button className="wordmark" type="button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+        <button className="wordmark" type="button" onClick={() => { if (!busy && experienceMode === 'search') { setGuestSearchResults(null); setError(''); setPortalMode('idle') }; window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }) }}>
           <span className="wordmark-mark">P</span>
           <span>PERCEPTION</span>
         </button>
@@ -916,7 +944,7 @@ function App() {
         )}
       </header>
 
-      <section className={`portal-hero portal-hero--${portalMode} portal-hero--experience-${experienceMode}`}>
+      <section className={`portal-hero portal-hero--${portalMode} portal-hero--experience-${experienceMode}${experienceMode === 'search' && guestSearchResults ? ' portal-hero--search-results' : ''}`}>
         <div className="portal-stage">
           <PlasmaPortal mode={portalMode} experienceMode={experienceMode} energy={typingEnergy} />
           <AmbientFish experienceMode={experienceMode} onSelect={() => setZOpen(true)} />
@@ -924,7 +952,7 @@ function App() {
           <div className="portal-reflection" aria-hidden="true" />
 
           <div className="hero-content">
-            <p className="hero-kicker">Tell Perception what you want to make real.</p>
+            <p className="hero-kicker">{experienceMode === 'search' ? 'SEARCH THE WEB · RESULTS FIRST · PERCEPTION ANALYSIS OPTIONAL' : 'Tell Perception what you want to make real.'}</p>
             <h1 className="hero-imagination-title">Your imagination. <em>Made possible.</em></h1>
             <p className="hero-belief">We don’t replace human imagination. We give it the power to become reality.</p>
             <p className="hero-support">Perception understands the goal, builds a route, takes approved action, and verifies what actually changed.</p>
@@ -994,6 +1022,20 @@ function App() {
           </div>
         </div>
       </section>
+
+      {guestSearchResults && experienceMode === 'search' && (
+        <div id="guest-web-results" aria-busy={busy}>
+          <WebSearchResults
+            page={guestSearchResults}
+            onAnalyze={(query) => {
+              selectExperienceMode('perceive')
+              setInput(`Analyze independent sources and competing evidence for: ${query}`)
+              setPortalMode('focused')
+              window.scrollTo({ top: 0, behavior: 'smooth' })
+            }}
+          />
+        </div>
+      )}
 
       {session && latestObjective && world && (
         <aside className="companion-work-rail" aria-label="Your saved Perception work">
