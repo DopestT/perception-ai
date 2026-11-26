@@ -42,8 +42,7 @@ describe('guest search service is budget-gated and provider-grounded', () => {
     denied.reserveQuota = vi.fn(async () => false)
     await expect(retrieveGuestWebSearch('query', denied)).rejects.toMatchObject({ code: 'quota_exceeded', httpStatus: 429 })
     expect(denied.fetcher).not.toHaveBeenCalled()
-    const notConfigured = base()
-    notConfigured.reserveQuota = vi.fn(async () => null)
+    const notConfigured = { ...base(), reserveQuota: vi.fn(async () => null) }
     await expect(retrieveGuestWebSearch('query', notConfigured)).rejects.toMatchObject({ code: 'not_ready', httpStatus: 503 })
     expect(notConfigured.fetcher).not.toHaveBeenCalled()
     const broken = base()
