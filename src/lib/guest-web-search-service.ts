@@ -17,7 +17,7 @@ export class GuestSearchFailure extends Error {
 }
 
 /** This is not a budget limiter. Callers must enforce an atomic, shared quota. */
-export type GuestSearchGate = (query: string) => Promise<boolean>
+export type GuestSearchGate = (query: string) => Promise<boolean | null>
 export type GuestSearchDependencies = Readonly<{
   braveApiKey: string | undefined
   reserveQuota: GuestSearchGate
@@ -40,9 +40,10 @@ export async function retrieveGuestWebSearch(
   catch { throw new GuestSearchFailure('invalid_request', 400) }
 
   if (!deps.braveApiKey) throw new GuestSearchFailure('not_ready', 503)
-  let allowed = false
+  let allowed: boolean | null = null
   try { allowed = await deps.reserveQuota(query) }
   catch { throw new GuestSearchFailure('not_ready', 503) }
+  if (allowed === null) throw new GuestSearchFailure('not_ready', 503)
   if (!allowed) throw new GuestSearchFailure('quota_exceeded', 429)
 
   const url = new URL('https://api.search.brave.com/res/v1/web/search')
