@@ -21,6 +21,9 @@ create table if not exists public.perception_guest_search_quota_daily (
 alter table public.perception_guest_search_quota_daily enable row level security;
 revoke all on table public.perception_guest_search_quota_daily
   from public, anon, authenticated;
+-- Service-role adapter needs explicit, narrowly scoped table privileges.
+grant select, insert, update on public.perception_guest_search_quota_daily
+  to service_role;
 
 -- Use only the server's service_role privileges; do not add anon policies.
 create or replace function public.perception_reserve_guest_search_quota(p_ip_hash text)
