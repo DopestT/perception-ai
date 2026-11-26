@@ -22,12 +22,22 @@ describe('Vercel public search route — disabled by default', () => {
   it('does not pay for search when shared quota infrastructure is absent', async () => {
     vi.stubEnv('PERCEPTION_SEARCH_PUBLIC_ENABLED', 'true')
     vi.stubEnv('PERCEPTION_SEARCH_BRAVE_API_KEY', 'TEST_ONLY_NOT_REAL')
+    vi.stubEnv('PERCEPTION_SEARCH_BRAVE_USAGE_RIGHTS_CONFIRMED', 'true')
     vi.stubEnv('PERCEPTION_SEARCH_SUPABASE_URL', '')
     vi.stubEnv('PERCEPTION_SEARCH_SERVICE_KEY', '')
     vi.stubEnv('PERCEPTION_SEARCH_IP_HASH_SECRET', '')
     const response = await GET(new Request('https://www.perceptionai.io/api/search?q=weather', {
       headers: { 'x-forwarded-for': '203.0.113.1' },
     }))
+    expect(response.status).toBe(503)
+    expect((await response.json()).error).toBe('not_ready')
+  })
+
+  it('cannot activate public Brave search until the product usage rights have been confirmed', async () => {
+    vi.stubEnv('PERCEPTION_SEARCH_PUBLIC_ENABLED', 'true')
+    vi.stubEnv('PERCEPTION_SEARCH_BRAVE_USAGE_RIGHTS_CONFIRMED', '')
+    vi.stubEnv('PERCEPTION_SEARCH_BRAVE_API_KEY', 'TEST_ONLY_NOT_REAL')
+    const response = await GET(new Request('https://www.perceptionai.io/api/search?q=example'))
     expect(response.status).toBe(503)
     expect((await response.json()).error).toBe('not_ready')
   })
@@ -41,6 +51,7 @@ describe('Vercel public search route — disabled by default', () => {
 
   it('cannot reach a provider merely from an enabled UI toggle', async () => {
     vi.stubEnv('PERCEPTION_SEARCH_PUBLIC_ENABLED', 'true')
+    vi.stubEnv('PERCEPTION_SEARCH_BRAVE_USAGE_RIGHTS_CONFIRMED', 'true')
     vi.stubEnv('PERCEPTION_SEARCH_BRAVE_API_KEY', '')
     const response = await GET(new Request('https://www.perceptionai.io/api/search?q=ordinary'))
     expect(response.status).toBe(503)
