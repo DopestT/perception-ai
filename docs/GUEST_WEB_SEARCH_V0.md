@@ -12,7 +12,9 @@ The existing DISCOVER / PERCEIVE / SEARCH visual identity and plasma interaction
 
 - `src/lib/web-search-contract.ts`: pure, provider-neutral, deterministic input and result normalization. Query length cap; HTTPS domain-only source URLs; no user/password-bearing/local links; duplicate removal; rank order; optional publication date only when supplied; retrieval time supplied by the calling service.
 - `src/lib/web-search-contract.test.ts`: offline tests for normal anonymous inputs, unsafe URLs, no made-up citations, empty output, limits, and optional analysis.
-- No production UI, API endpoint, API key, datastore, model invocation, automated provider spend, or auth/RLS changes. These tests validate only the contract, not a working web-search product.
+- `src/WebSearchResults.tsx` + `src/web-search-results.css`: stand-alone, reusable presentation of real provider-returned links/snippets and a separately wired, optional Perception analysis button; **not yet mounted in the live page**.
+- `src/WebSearchResults.test.tsx`: SSR checks for ordinary clickable links, optional analysis, empty states and HTML escaping.
+- No production UI wiring, API endpoint, API key, datastore, model invocation, automated provider spend, or auth/RLS changes. These tests validate only the contract/presentation, not a working web-search product.
 
 ## Required implementation order after the contract
 
