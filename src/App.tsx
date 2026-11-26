@@ -193,7 +193,7 @@ function App() {
   const [error, setError] = useState('')
   const [experienceMode, setExperienceMode] = useState<ExperienceMode>(() => {
     const mode = new URLSearchParams(window.location.search).get('mode')
-    return mode === 'discover' || mode === 'search' || mode === 'forecast' ? mode : 'search'
+    return mode === 'discover' || mode === 'perceive' || mode === 'search' || mode === 'forecast' ? mode : 'search'
   })
   const [portalMode, setPortalMode] = useState<PlasmaMode>('idle')
   const [typingEnergy, setTypingEnergy] = useState(0)
