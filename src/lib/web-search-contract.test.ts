@@ -52,7 +52,7 @@ describe('conventional guest web search contract — offline only', () => {
       'https://user:password@example.com/', 'https://localhost/',
       'https://intranet.local/', 'https://internal.test/',
       'https://127.0.0.1/', 'https://192.168.0.2/',
-      'https://[::1]/', 'https://example.com:443/',
+      'https://[::1]/', 'https://example.com:444/',
     ]) expect(safePublicResultUrl(url)).toBeNull()
   })
 
