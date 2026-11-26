@@ -11,13 +11,22 @@ export async function fetchGuestWebResults(
   try {
     response = await fetch(path, {
       method: 'GET',
-      credentials: 'omit',
+      // Allow the host's own preview-auth cookie without reading application sessions.
+      // The API remains account-free; no cookies are sent to a third-party origin.
+      credentials: 'same-origin',
+      redirect: 'manual',
       headers: { Accept: 'application/json' },
       signal,
       cache: 'no-store',
     })
   } catch {
     throw new Error('Web search is temporarily unavailable. Try again later.')
+  }
+  if (response.type === 'opaqueredirect' || response.redirected || (response.status >= 300 && response.status < 400)) {
+    throw new Error('Web search is unavailable at this address. Open the authorized preview or try the public site.')
+  }
+  if (!response.headers.get('Content-Type')?.toLowerCase().includes('application/json')) {
+    throw new Error('Web search could not reach its service. Try again later.')
   }
   const payload = await response.json().catch(() => null) as Record<string, unknown> | null
   if (!response.ok) {
