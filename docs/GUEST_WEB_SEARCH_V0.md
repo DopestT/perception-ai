@@ -1,6 +1,6 @@
 # PERCEPTION ordinary web SEARCH — guest-first V0 contract
 
-Status: **review-only**, prepared November 26, 2026. No search provider was activated, no network requests made, no real results returned, and nothing is in production as a result of this branch.
+Status: **review-only**, prepared November 26, 2026. The guest search UI and a fail-closed Vercel API route are now wired on this separate branch. No search provider was activated, no paid provider query was made, no real result was returned, and production remains unchanged. Preview requests will report unavailable until an approved quota migration, secret configuration, billing cap and release are completed.
 
 ## Locked product decision
 
@@ -12,16 +12,21 @@ The existing DISCOVER / PERCEIVE / SEARCH visual identity and plasma interaction
 
 - `src/lib/web-search-contract.ts`: pure, provider-neutral, deterministic input and result normalization. Query length cap; HTTPS domain-only source URLs; no user/password-bearing/local links; duplicate removal; rank order; optional publication date only when supplied; retrieval time supplied by the calling service.
 - `src/lib/web-search-contract.test.ts`: offline tests for normal anonymous inputs, unsafe URLs, no made-up citations, empty output, limits, and optional analysis.
-- `src/WebSearchResults.tsx` + `src/web-search-results.css`: stand-alone, reusable presentation of real provider-returned links/snippets and a separately wired, optional Perception analysis button; **not yet mounted in the live page**.
-- `src/WebSearchResults.test.tsx`: SSR checks for ordinary clickable links, optional analysis, empty states and HTML escaping.
-- No production UI wiring, API endpoint, API key, datastore, model invocation, automated provider spend, or auth/RLS changes. These tests validate only the contract/presentation, not a working web-search product.
+- `src/WebSearchResults.tsx` + `src/web-search-results.css`: reusable view of genuine provider links/snippets and an optional Perception analysis button, now **mounted in the feature-branch App, not production**.
+- `src/lib/guest-web-search-client.ts`: anonymous, no-credential, same-origin browser fetch with honest error states and response normalization.
+- `src/lib/guest-web-search-service.ts`: Brave Web Search adapter; requires an atomic quota reservation before any paid API request, limits result count and duration, and does not fabricate sources.
+- `api/search.ts`: Vercel `GET /api/search?q=...` handler; disabled by default, cross-site guarded, and no provider call until a real Supabase quota RPC approves the request. Needs separately approved server-only configuration.
+- `src/App.tsx`: SEARCH is default first-view mode and submits independently of the sign-in wall/Project World. The button for deeper Perception research is optional and only prefills a separate explicit action.
+- `src/WebSearchResults.test.tsx`, `src/lib/guest-web-search-service.test.ts` and `src/lib/guest-web-search-endpoint.test.ts`: SSR/offline tests for linked results, limit/authorization fail-closed, empty/error behavior and source escaping.
+- `docs/GUEST_SEARCH_QUOTA_PROPOSAL.sql`: **unapplied proposal** for daily shared hard quotas; generate a real migration with the Supabase CLI and review security before deployment.
+- No production UI, live search endpoint, API key, datastore change, model invocation, automated paid provider spend, or auth/RLS change. This is branch code and tests only, not a working public search release.
 
-## Required implementation order after the contract
+## Remaining release gates after branch code
 
-1. **Server-side provider adapter, no secret in browser**. Evaluate Brave Web Search first for an independent conventional ranked-link index, with Tavily as a separate research/search alternative (its existing signed-in anticipatory pre-search is not a public results endpoint). Avoid Google's discontinued Custom Search JSON API for a new product. Compare provider latency, source quality, allowed display/caching/redistribution rights and real per-query price before choosing. Do not activate paid/credit-bearing provider access without specific approval.
-2. **Anonymous abuse and spend control**. Server-enforced rate and concurrency limits, query bounds, caching only where terms permit, deterministic short timeouts, backoff, privacy boundaries, request metering and total spend hard stop. Keep public retrieval distinct from private Project World; never grant anonymous users privileged operations. Approval required for production permission changes and billing.
-3. **Guest-first results UI**. SEARCH submits once, shows loading/empty/retry states, title, HTTPS original link, domain, short snippet, provenance and published date only when supplied. Clicking a source navigates normally. A second action `Analyze with PERCEPTION` requests an opt-in grounded synthesis, clearly separate from ordinary search and with authorization/cost gates. Account optional for saved research, workspaces and agent execution.
-4. **Real offline/preview test and user acceptance**. Test a mocked provider (clearly labeled fixture) in branch/preview, then an explicitly approved provider sandbox. Verify actual output before public release; do not label fixtures as live search.
+1. **Provider activation, no secret in browser**. A Brave Web Search adapter is coded but not enabled. Compare it against Tavily for ranking, licensing, privacy and actual cost. Brave currently quotes $5 per 1,000 requests with $5 monthly credits, but requires an API signup and payment/budget decision. Do not purchase or activate it without specific approval. Its credentials must be server-only.
+2. **Anonymous abuse and spend control**. With approval, generate and review a migration for `perception_reserve_guest_search_quota` from the SQL proposal; test atomic limits and RLS. Configure server-only Supabase connection, an HMAC fingerprint salt, a separate Brave API key and `PERCEPTION_SEARCH_PUBLIC_ENABLED=true` only after quota and provider hard monthly cap are verified. Also require platform WAF rate limiting/concurrency controls and a privacy/retention policy. Fail closed on missing service role/RPC, never expose provider or service keys in Vite. Approval required for any live DB/security/billing/configuration changes.
+3. **Verify a genuine guest-first results UI**. SEARCH now submits independently of sign-in and displays a source list when the API returns data. The optional `Analyze with PERCEPTION` action prefills a separate Perceive request rather than synthesizing automatically; signing in may be required at that second stage. Browser/network acceptance, actual upstream relevance and real provider credentials remain untested. The preview should honestly report search unavailable until enabled.
+4. **Real offline/preview test and user acceptance**. CI must pass for final branch head, preview must verify unauthenticated SEARCH never opens auth, and unconfigured `/api/search` must return HTTP 503 without paid calls. Test a mocked provider with explicit fixture labels, then a separately approved capped Brave sandbox. Confirm source validity and speed; never label fixtures as live results.
 5. **Release only after explicit approval** and live browser checks on desktop, iPhone/Safari, direct URL, repeat searches, expired tokens, slow/error providers, traffic spikes and rollback.
 
 ## Search quality scoreboard — targets, not measured performance
