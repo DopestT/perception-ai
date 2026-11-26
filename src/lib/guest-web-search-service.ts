@@ -1,4 +1,4 @@
-import { normalizeWebQuery, normalizeWebSearchPage, type WebSearchPage } from './web-search-contract'
+import { normalizeWebQuery, normalizeWebSearchPage, type WebSearchPage } from './web-search-contract.js'
 
 export class GuestSearchFailure extends Error {
   constructor(

@@ -1,4 +1,4 @@
-import { GuestSearchFailure, retrieveGuestWebSearch } from '../src/lib/guest-web-search-service'
+import { GuestSearchFailure, retrieveGuestWebSearch } from '../src/lib/guest-web-search-service.js'
 
 // Vercel Node Function; no secrets or server keys are ever included in Vite output.
 declare const process: { env: Record<string, string | undefined> }
