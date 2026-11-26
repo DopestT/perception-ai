@@ -193,7 +193,7 @@ function App() {
   const [error, setError] = useState('')
   const [experienceMode, setExperienceMode] = useState<ExperienceMode>(() => {
     const mode = new URLSearchParams(window.location.search).get('mode')
-    return mode === 'discover' || mode === 'search' || mode === 'forecast' ? mode : 'perceive'
+    return mode === 'discover' || mode === 'search' || mode === 'forecast' ? mode : 'search'
   })
   const [portalMode, setPortalMode] = useState<PlasmaMode>('idle')
   const [typingEnergy, setTypingEnergy] = useState(0)
@@ -951,7 +951,7 @@ function App() {
           <div className="portal-reflection" aria-hidden="true" />
 
           <div className="hero-content">
-            <p className="hero-kicker">Tell Perception what you want to make real.</p>
+            <p className="hero-kicker">{experienceMode === 'search' ? 'SEARCH THE WEB · RESULTS FIRST · PERCEPTION ANALYSIS OPTIONAL' : 'Tell Perception what you want to make real.'}</p>
             <h1 className="hero-imagination-title">Your imagination. <em>Made possible.</em></h1>
             <p className="hero-belief">We don’t replace human imagination. We give it the power to become reality.</p>
             <p className="hero-support">Perception understands the goal, builds a route, takes approved action, and verifies what actually changed.</p>
