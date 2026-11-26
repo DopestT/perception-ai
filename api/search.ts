@@ -17,14 +17,14 @@ const json = (data: unknown, status: number) =>
  * always denies the request BEFORE a paid provider call is possible.
  * Required quota SQL is a separate, approval-gated migration.
  */
-async function reserveServerQuota(request: Request): Promise<boolean> {
+async function reserveServerQuota(request: Request): Promise<boolean | null> {
   const base = process.env.PERCEPTION_SEARCH_SUPABASE_URL
   const key = process.env.PERCEPTION_SEARCH_SERVICE_KEY
   const salt = process.env.PERCEPTION_SEARCH_IP_HASH_SECRET
   const forwardedFor = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
   if (!base || !/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(base) ||
       !key || !salt || salt.length < 32 || !forwardedFor || forwardedFor.length > 64 ||
-      !/^[a-f0-9:.]+$/i.test(forwardedFor)) return false
+      !/^[a-f0-9:.]+$/i.test(forwardedFor)) return null
 
   // HMAC makes visitor buckets unlinkable without this independent server secret.
   const encoder = new TextEncoder()
@@ -47,8 +47,9 @@ async function reserveServerQuota(request: Request): Promise<boolean> {
     cache: 'no-store',
   })
   // Fail closed on RPC absent, denied, non-2xx, error or malformed return.
-  if (!response.ok) return false
-  return (await response.json()) === true
+  if (!response.ok) return null
+  const value = await response.json()
+  return typeof value === 'boolean' ? value : null
 }
 
 export async function GET(request: Request): Promise<Response> {
