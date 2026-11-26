@@ -527,13 +527,14 @@ function App() {
       setBusy(true)
       setError('')
       setNotice('')
-      setGuestSearchResults(null)
+      // Keep the previous clearly labeled results during a repeat search.
       setPortalMode('charging')
       try {
         const nextResults = await fetchGuestWebResults(statement)
         setGuestSearchResults(nextResults)
         setPortalMode('idle')
-        window.setTimeout(() => document.getElementById('guest-web-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+        // The existing portal compacts into the results toolbar; do not scroll past it.
+        window.scrollTo({ top: 0, behavior: 'instant' })
       } catch (cause) {
         setPortalMode('focused')
         setError(cause instanceof Error ? cause.message : 'Web search is temporarily unavailable.')
@@ -918,7 +919,7 @@ function App() {
   return (
     <main className="perception-shell">
       <header className="home-header">
-        <button className="wordmark" type="button" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+        <button className="wordmark" type="button" onClick={() => { if (!busy && experienceMode === 'search') { setGuestSearchResults(null); setError(''); setPortalMode('idle') }; window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }) }}>
           <span className="wordmark-mark">P</span>
           <span>PERCEPTION</span>
         </button>
@@ -943,7 +944,7 @@ function App() {
         )}
       </header>
 
-      <section className={`portal-hero portal-hero--${portalMode} portal-hero--experience-${experienceMode}`}>
+      <section className={`portal-hero portal-hero--${portalMode} portal-hero--experience-${experienceMode}${experienceMode === 'search' && guestSearchResults ? ' portal-hero--search-results' : ''}`}>
         <div className="portal-stage">
           <PlasmaPortal mode={portalMode} experienceMode={experienceMode} energy={typingEnergy} />
           <AmbientFish experienceMode={experienceMode} onSelect={() => setZOpen(true)} />
@@ -1023,7 +1024,7 @@ function App() {
       </section>
 
       {guestSearchResults && experienceMode === 'search' && (
-        <div id="guest-web-results">
+        <div id="guest-web-results" aria-busy={busy}>
           <WebSearchResults
             page={guestSearchResults}
             onAnalyze={(query) => {
