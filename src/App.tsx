@@ -9,6 +9,9 @@ import { AmbientFish } from './AmbientFish'
 import { ZCompanion } from './ZCompanion'
 import { PerceptionVision } from './PerceptionVision'
 import { EvidenceRelationshipPanel } from './EvidenceRelationshipPanel'
+import { WebSearchResults } from './WebSearchResults'
+import { fetchGuestWebResults } from './lib/guest-web-search-client'
+import type { WebSearchPage } from './lib/web-search-contract'
 import { resolveForecastInput, resolveFrontDoorInput } from './lib/front-door-intake'
 import {
   attachKalshiMarketSignal,
@@ -156,6 +159,7 @@ function App() {
   const [world, setWorld] = useState<ProjectWorld | null>(null)
   const [ledgers, setLedgers] = useState<ProjectLedgers | null>(null)
   const [runtimeResult, setRuntimeResult] = useState<ObjectiveRuntimeResult | null>(null)
+  const [guestSearchResults, setGuestSearchResults] = useState<WebSearchPage | null>(null)
   const [forecast, setForecast] = useState<Forecast | null>(null)
   const [calibration, setCalibration] = useState<ForecastCalibration | null>(null)
   const [forecastDeadline, setForecastDeadline] = useState(defaultForecastDeadline)
@@ -517,6 +521,28 @@ function App() {
     intentShadowAbort.current = null
     intentShadowGeneration.current += 1
 
+    // Ordinary web SEARCH is the default: no sign-in, Project World or AI job.
+    // A separate, explicitly clicked action may start deeper PERCEPTION work.
+    if (experienceMode === 'search') {
+      setBusy(true)
+      setError('')
+      setNotice('')
+      setGuestSearchResults(null)
+      setPortalMode('charging')
+      try {
+        const nextResults = await fetchGuestWebResults(statement)
+        setGuestSearchResults(nextResults)
+        setPortalMode('idle')
+        window.setTimeout(() => document.getElementById('guest-web-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+      } catch (cause) {
+        setPortalMode('focused')
+        setError(cause instanceof Error ? cause.message : 'Web search is temporarily unavailable.')
+      } finally {
+        setBusy(false)
+      }
+      return
+    }
+
     const frontDoor = resolveFrontDoorInput(statement)
     if (frontDoor.kind === 'ignore') return
     if (frontDoor.kind === 'conversation') {
@@ -877,6 +903,7 @@ function App() {
 
   const selectExperienceMode = (nextMode: ExperienceMode) => {
     if (busy || nextMode === experienceMode) return
+    if (nextMode !== 'search') setGuestSearchResults(null)
     if (intentShadowTimer.current) window.clearTimeout(intentShadowTimer.current)
     intentShadowAbort.current?.abort()
     intentShadowAbort.current = null
@@ -994,6 +1021,20 @@ function App() {
           </div>
         </div>
       </section>
+
+      {guestSearchResults && experienceMode === 'search' && (
+        <div id="guest-web-results">
+          <WebSearchResults
+            page={guestSearchResults}
+            onAnalyze={(query) => {
+              selectExperienceMode('perceive')
+              setInput(`Analyze independent sources and competing evidence for: ${query}`)
+              setPortalMode('focused')
+              window.scrollTo({ top: 0, behavior: 'smooth' })
+            }}
+          />
+        </div>
+      )}
 
       {session && latestObjective && world && (
         <aside className="companion-work-rail" aria-label="Your saved Perception work">
