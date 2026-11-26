@@ -31,7 +31,7 @@ async function reserveServerQuota(request: Request): Promise<boolean> {
   const hmac = await crypto.subtle.importKey(
     'raw', encoder.encode(salt), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
   )
-  const signature = await crypto.subtle.sign('HMAC', hmac, encoder.encode(forwardedFor))
+  const signature = await crypto.subtle.sign('HMAC', hmac, encoder.encode(`${new Date().toISOString().slice(0, 10)}:${forwardedFor}`))
   const hash = Array.from(new Uint8Array(signature)).map((x) => x.toString(16).padStart(2, '0')).join('')
 
   const response = await fetch(`${base}/rest/v1/rpc/perception_reserve_guest_search_quota`, {
@@ -53,6 +53,9 @@ async function reserveServerQuota(request: Request): Promise<boolean> {
 
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url)
+  if (request.headers.get('sec-fetch-site') === 'cross-site') {
+    return json({ error: 'invalid_request', message: 'Cross-site searches are not supported.' }, 403)
+  }
   if (url.searchParams.getAll('q').length !== 1 ||
       [...url.searchParams.keys()].some((key) => key !== 'q')) {
     return json({ error: 'invalid_request', message: 'Enter one search query.' }, 400)
