@@ -63,7 +63,10 @@ export async function GET(request: Request): Promise<Response> {
   }
   // Guest link lookup is a different feature from Project World / AI routing.
   // No session, JWT, browser credential, external context or model call here.
-  if (process.env.PERCEPTION_SEARCH_PUBLIC_ENABLED !== 'true') {
+  if (process.env.PERCEPTION_SEARCH_PUBLIC_ENABLED !== 'true' ||
+      process.env.PERCEPTION_SEARCH_BRAVE_USAGE_RIGHTS_CONFIRMED !== 'true') {
+    // Provider terms must explicitly permit the intended public-search use.
+    // This is a separate gate from authorization to spend included API credits.
     return json({ error: 'not_ready', message: 'Web search is not available yet.' }, 503)
   }
 
